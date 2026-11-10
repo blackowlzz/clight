@@ -306,7 +306,42 @@ fn memory_mb() -> (u64, u64) {
     (field("MemTotal:"), field("MemAvailable:"))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+fn memory_mb() -> (u64, u64) {
+    #[repr(C)]
+    struct MemoryStatus {
+        length: u32,
+        load: u32,
+        total: u64,
+        avail: u64,
+        total_page: u64,
+        avail_page: u64,
+        total_virtual: u64,
+        avail_virtual: u64,
+        avail_extended: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatus) -> i32;
+    }
+    let mut s = MemoryStatus {
+        length: std::mem::size_of::<MemoryStatus>() as u32,
+        load: 0,
+        total: 0,
+        avail: 0,
+        total_page: 0,
+        avail_page: 0,
+        total_virtual: 0,
+        avail_virtual: 0,
+        avail_extended: 0,
+    };
+    if unsafe { GlobalMemoryStatusEx(&mut s) } == 0 {
+        return (0, 0);
+    }
+    (s.total >> 20, s.avail >> 20)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn memory_mb() -> (u64, u64) {
     (0, 0)
 }

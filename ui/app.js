@@ -1278,6 +1278,9 @@ const keyMap = () => {
 }
 
 
+// Keys the embedded browser on Windows would act on: reload the page, view the source, toggle zoom or caret browsing.
+const BROWSER_KEYS = new Set(['F5', 'C-F5', 'C-S-r', 'F7', 'C-u', 'C-0', 'C-S-0', 'C-S-p'])
+
 document.addEventListener('keydown', async (e) => {
   if (e.key === 'Escape') {
     if (menuVisible()) {
@@ -1291,6 +1294,7 @@ document.addEventListener('keydown', async (e) => {
   }
   if (modalOpen()) return
   const name = keyName(e)
+  if (BROWSER_KEYS.has(name) && !keyMap().has(name)) e.preventDefault()
   if ((termMod?.hasFocus() || build.runTermFocused()) && !TERMINAL_PASS.has(name)) return
   if (['S-F9', 'F7', 'F8', 'F9', 'S-F8', 'A-F9'].includes(name)) await loadDebug()
   const a = keyMap().get(name)

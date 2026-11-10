@@ -10,7 +10,7 @@
   --kw: 600; --cs: italic; --shadow: rgba(0,0,0,.5); --scrim: rgba(0,0,0,.4);
   --glow-c: rgba(255,255,255,.05); --glow-size: 200px;
   --sans: 'Inter Tight Variable', system-ui, sans-serif;
-  --mono: 'JetBrains Mono Variable', 'DejaVu Sans Mono', monospace;
+  --mono: 'JetBrains Mono Variable', 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace;
   --fs: 13px; --lh: 20px; --ui-fs: 12.5px; --r1: 4px; --r2: 6px; --r3: 11px; --ch: 8px; --cols: 120; --row: 22px; --bar: 34px; --tab: 30px;
   color-scheme: dark;
   font-family: var(--sans);
@@ -38,6 +38,8 @@ button.ghost, button.plain { border-color: transparent; color: var(--muted); pad
 button.ghost:hover:not(:disabled), button.plain:hover:not(:disabled) { color: var(--text); }
 .iconbtn { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--r1); color: var(--muted); font-size: 13px; }
 .iconbtn:hover:not(:disabled) { color: var(--text); }
+button.iconbtn { padding: 0; }
+button:has(> svg:only-child) { display: inline-grid; place-items: center; }
 .iconbtn:disabled { color: var(--line-strong); }
 .iconbtn.tiny { width: 22px; height: 22px; }
 .chip, .toggle { padding: 1px 8px; font-size: 11.5px; color: var(--muted); border-color: transparent; white-space: nowrap; }
@@ -295,7 +297,7 @@ e { color: var(--faint); background: var(--active); border-radius: 2px; }
 
 #v-terminal { overflow: hidden; display: flex; flex-direction: column; }
 .termtabs { display: flex; gap: 1px; align-items: center; }
-.tgrid { position: relative; flex: 1; min-height: 0; margin: 0 0 4px 12px; overflow: hidden; font: var(--fs)/var(--lh) 'JetBrains Mono Variable', 'Symbols Nerd Font Mono', 'MesloLGL Nerd Font Mono', 'FantasqueSansM Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'MesloLGS NF', 'Hack Nerd Font', 'DejaVu Sans Mono', monospace; letter-spacing: 0; font-variant-ligatures: none; color: var(--code); user-select: text; -webkit-user-select: text; cursor: text; }
+.tgrid { position: relative; flex: 1; min-height: 0; margin: 0 0 4px 12px; overflow: hidden; font: var(--fs)/var(--lh) 'JetBrains Mono Variable', 'Symbols Nerd Font Mono', 'MesloLGL Nerd Font Mono', 'FantasqueSansM Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'MesloLGS NF', 'Hack Nerd Font', 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace; letter-spacing: 0; font-variant-ligatures: none; color: var(--code); user-select: text; -webkit-user-select: text; cursor: text; }
 .tgrid .tr { position: absolute; left: 0; right: 0; height: var(--lh); white-space: pre; contain: layout style; }
 .tgrid .b { font-weight: 600; color: var(--text); }
 .tgrid .d { color: var(--faint); }

@@ -114,7 +114,9 @@ export const actions = new Map()
 
 export function keyName(e) {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key
-  return (e.ctrlKey || e.metaKey ? 'C-' : '') + (e.altKey ? 'A-' : '') + (e.shiftKey ? 'S-' : '') + k
+  // On Windows, AltGr (used for { [ ] @ # on many keyboards) reports Ctrl and Alt together.
+  const altGr = e.getModifierState?.('AltGraph') ?? false
+  return ((e.ctrlKey || e.metaKey) && !altGr ? 'C-' : '') + (e.altKey && !altGr ? 'A-' : '') + (e.shiftKey ? 'S-' : '') + k
 }
 
 export function keyLabel(k) {

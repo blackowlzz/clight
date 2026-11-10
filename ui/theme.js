@@ -132,7 +132,7 @@ const FONTS = {
   system: "system-ui, -apple-system, 'Segoe UI', sans-serif",
 }
 const MONOS = {
-  jetbrains: "'JetBrains Mono Variable', 'DejaVu Sans Mono', monospace",
+  jetbrains: "'JetBrains Mono Variable', 'Cascadia Mono', Consolas, 'DejaVu Sans Mono', monospace",
   system: 'monospace',
 }
 const DENSITY = { compact: { row: 20, bar: 30, tab: 26 }, normal: { row: 22, bar: 34, tab: 30 }, comfortable: { row: 26, bar: 38, tab: 34 } }
