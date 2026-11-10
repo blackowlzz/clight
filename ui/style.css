@@ -553,3 +553,5 @@ kbd { font: inherit; font-size: 11.5px; color: var(--faint); white-space: nowrap
 :root[data-fx-ui='on'] .hit { animation: fx-fade 150ms ease-out; }
 .slide { display: inline-block; white-space: pre; }
 .erased { position: absolute; height: var(--lh); white-space: pre; pointer-events: none; color: var(--muted); z-index: 1; }
+:root[data-fx-ui='on'] .ci { transition: background-color 90ms ease, color 90ms ease; }
+:root[data-fx-ui='on'] .gl { transition: color 140ms ease; }

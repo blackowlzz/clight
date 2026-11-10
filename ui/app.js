@@ -445,6 +445,7 @@ function renderTabs() {
         'div',
         {
           class: 'tab' + (t.id === state.active ? ' on' : '') + (t.dirty ? ' dirty' : ''),
+          'data-id': t.id,
           title: t.path,
           onpointerdown: (e) => {
             if (e.button === 1) {
@@ -474,8 +475,22 @@ function renderTabs() {
     ),
   )
   $('tabs').querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  const tabEls = [...$('tabs').querySelectorAll('.tab')]
+  const fresh = tabEls.filter((el) => !shownTabs.has(el.dataset.id))
+  shownTabs = new Set(state.tabs.map((t) => String(t.id)))
+  const now = performance.now()
+  if (fresh.length === 1) tabBorn.set(fresh[0].dataset.id, now)
+  // The tab list is drawn again right away, so the pop carries on from where it was.
+  for (const el of tabEls) {
+    const born = tabBorn.get(el.dataset.id)
+    if (born === undefined) continue
+    if (now - born > 180 || document.documentElement.dataset.fxUi !== 'on') tabBorn.delete(el.dataset.id)
+    else el.animate([{ opacity: 0, transform: 'translateY(5px) scale(.95)' }, { opacity: 1, transform: 'none' }], { duration: 180, delay: -(now - born), easing: 'cubic-bezier(.2, .7, .2, 1)', fill: 'backwards' })
+  }
   renderPath()
 }
+let shownTabs = new Set()
+const tabBorn = new Map()
 
 function renderPath() {
   const t = activeTab()
@@ -734,7 +749,11 @@ ed.configure({
     $('st-eol').textContent = v.crlf ? 'CRLF' : 'LF'
     if (!state.running) $('st-msg').textContent = v.msg ?? ''
     const plural = (n, s) => `${n} ${s}${n === 1 ? '' : 's'}`
-    $('st-diag').textContent = v.errors || v.warnings ? `${plural(v.errors, 'error')}  ${plural(v.warnings, 'warning')}` : ''
+    const diagText = v.errors || v.warnings ? `${plural(v.errors, 'error')}  ${plural(v.warnings, 'warning')}` : ''
+    if ($('st-diag').textContent !== diagText) {
+      $('st-diag').textContent = diagText
+      if (diagText && document.documentElement.dataset.fxUi === 'on') $('st-diag').animate([{ transform: 'scale(1.18)' }, { transform: 'none' }], { duration: 200, easing: 'ease-out' })
+    }
     if (v.all_bps) {
       state.bps.set(tab.path, new Set(v.all_bps))
       saveSession()

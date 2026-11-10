@@ -273,6 +273,12 @@ function typingEffects(v, x, y, row) {
   if (!grew && prevRow === row && typed > 0 && typed <= 80) typedMarks.push({ row, from: prevCol, to: v.cur[1], t: performance.now() })
   fadeTyped(row)
   if (!grew && prevRow === row && v.total === prevTotal) eraseText(prevText, seenText, row)
+  const lost = prevTotal - v.total
+  if (same && lost > 0 && lost <= 5) {
+    if (lost === 1 && prevRow === row && prevText.trim() && prevText !== seenText) eraseLine(prevText, row)
+    glideRows(row, lost * LH)
+  }
+  if (grew) glideRows(row, -LH)
   if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
 }
 
@@ -295,6 +301,25 @@ function wrapRange(el, from, to, className) {
     range.surroundContents(span)
     return span
   })
+}
+
+/** Rows below a change move into place instead of jumping. */
+function glideRows(from, dy) {
+  for (const [n, r] of live) {
+    if (n <= from) continue
+    for (const el of [r.l, r.g]) el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 150, easing: 'ease-out' })
+  }
+}
+
+/** A deleted line slides out to the left as it fades. */
+function eraseLine(text, row) {
+  const ghost = document.createElement('div')
+  ghost.className = 'erased'
+  ghost.textContent = text
+  ghost.style.left = PAD + 'px'
+  ghost.style.top = row * LH + 'px'
+  linesEl.parentElement.append(ghost)
+  ghost.animate([{ opacity: 0.8, filter: 'blur(0px)', transform: 'none' }, { opacity: 0, filter: 'blur(3px)', transform: 'translateX(-14px)' }], { duration: 220, easing: 'ease-out' }).onfinish = () => ghost.remove()
 }
 
 /** Deleted text fades out where it was, and what follows it glides into the gap. */

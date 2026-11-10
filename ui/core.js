@@ -148,8 +148,11 @@ export const closeModal = () => closeTop?.()
 export function modal(content) {
   const scrim = h('div', { class: 'scrim' }, content)
   const close = () => {
-    scrim.remove()
     closeTop = null
+    if (root.dataset.fxUi === 'on') {
+      scrim.style.pointerEvents = 'none'
+      scrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 110, easing: 'ease-in' }).onfinish = () => scrim.remove()
+    } else scrim.remove()
     app.refocus?.()
   }
   scrim.addEventListener('pointerdown', (e) => e.target === scrim && close())
