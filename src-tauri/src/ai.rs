@@ -30,6 +30,7 @@ struct Chunk {
 }
 
 static ACTIVE: Mutex<Option<HashMap<u32, Arc<AtomicBool>>>> = Mutex::new(None);
+static SUGGESTING: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
 
 fn base(url: &str) -> Result<String, String> {
     let url = url.trim().trim_end_matches('/');
@@ -238,6 +239,126 @@ pub async fn models(ep: Endpoint) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// What the model sees to finish a line.
+pub struct Snapshot {
+    pub key: String,
+    pub file: String,
+    pub head: String,
+    pub prefix: String,
+    pub suffix: String,
+    pub others: Vec<(String, String)>,
+}
+
+#[derive(Serialize, Clone)]
+struct Suggestion {
+    key: String,
+    text: String,
+}
+
+/// The Qwen2.5-Coder format for filling in the middle, with the other open files as context.
+pub fn fim_prompt(s: &Snapshot) -> String {
+    let mut p = String::from("<|repo_name|>project\n");
+    for (name, text) in &s.others {
+        p.push_str(&format!("<|file_sep|>{name}\n{text}\n"));
+    }
+    let lead = if s.head.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n// …\n", s.head.trim_end())
+    };
+    p.push_str(&format!(
+        "<|file_sep|>{}\n<|fim_prefix|>{lead}{}<|fim_suffix|>{}<|fim_middle|>",
+        s.file, s.prefix, s.suffix
+    ));
+    p
+}
+
+/// Turns what the model wrote into something to show after the caret, or nothing.
+pub fn clean(raw: &str, prefix: &str, suffix: &str) -> Option<String> {
+    let mut text = raw.lines().next().unwrap_or("").trim_end().to_string();
+    if text.chars().any(|c| c.is_control() && c != '\t') {
+        return None;
+    }
+    // The line already ends with what the editor closed for the user.
+    let closers = suffix.lines().next().unwrap_or("").trim_end();
+    let mut cut = false;
+    if !closers.is_empty() {
+        if let Some(at) = text.find(closers) {
+            text.truncate(at);
+            cut = true;
+        }
+    }
+    if prefix.ends_with(' ') || prefix.ends_with('\t') {
+        text = text.trim_start().to_string();
+    }
+    // Something follows the caret, so a trailing space is part of the answer.
+    let text = if cut {
+        text
+    } else {
+        text.trim_end().to_string()
+    };
+    let worth = text.chars().filter(|c| !c.is_whitespace()).count() >= 1;
+    (worth && text.chars().count() <= 200).then_some(text)
+}
+
+/// Starts asking the built-in AI to finish the line. The answer comes as an `ai-suggestion` event.
+pub fn suggest(app: AppHandle, size: String, snap: Snapshot) {
+    let handle = tauri::async_runtime::spawn(async move {
+        let Ok(base) = crate::llama::ensure(&app, 0, &size).await else {
+            return;
+        };
+        let Ok(client) = client() else { return };
+        let body = json!({
+            "prompt": fim_prompt(&snap),
+            "n_predict": 48,
+            "temperature": 0,
+            "top_k": 1,
+            "cache_prompt": true,
+            "stream": false,
+            "stop": ["\n", "<|file_sep|>", "<|fim_pad|>", "<|endoftext|>", "<|im_end|>"],
+        });
+        let Ok(response) = client
+            .post(format!("{base}/completion"))
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+        else {
+            return;
+        };
+        if !response.status().is_success() {
+            return;
+        }
+        let Ok(text) = response.text().await else {
+            return;
+        };
+        crate::llama::touch();
+        let content = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v["content"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        if let Some(text) = clean(&content, &snap.prefix, &snap.suffix) {
+            let _ = app.emit(
+                "ai-suggestion",
+                Suggestion {
+                    key: snap.key,
+                    text,
+                },
+            );
+        }
+    });
+    if let Some(old) = SUGGESTING.lock().unwrap().replace(handle) {
+        old.abort();
+    }
+}
+
+/// Drops the suggestion being asked for, which also stops the model from writing it.
+pub fn cancel_suggest() {
+    if let Some(old) = SUGGESTING.lock().unwrap().take() {
+        old.abort();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +399,42 @@ mod tests {
         let body = r#"{"error":{"message":"model 'x' not found"}}"#;
         assert!(error_text(reqwest::StatusCode::NOT_FOUND, body).contains("model 'x' not found"));
         assert!(error_text(reqwest::StatusCode::UNAUTHORIZED, "").contains("API key"));
+    }
+
+    fn snap() -> Snapshot {
+        Snapshot {
+            key: "1:2:3".into(),
+            file: "main.c".into(),
+            head: String::new(),
+            prefix: "int main(void) {\n    printf(\"ins".into(),
+            suffix: "\");\n}\n".into(),
+            others: vec![("util.h".into(), "int add(int a, int b);".into())],
+        }
+    }
+
+    #[test]
+    fn the_prompt_uses_the_qwen_fill_in_the_middle_format() {
+        assert_eq!(
+            fim_prompt(&snap()),
+            "<|repo_name|>project\n<|file_sep|>util.h\nint add(int a, int b);\n<|file_sep|>main.c\n<|fim_prefix|>int main(void) {\n    printf(\"ins<|fim_suffix|>\");\n}\n<|fim_middle|>"
+        );
+        let mut cut = snap();
+        cut.head = "#include <stdio.h>\n".into();
+        assert!(fim_prompt(&cut).contains("<|fim_prefix|>#include <stdio.h>\n// …\nint main"));
+    }
+
+    #[test]
+    fn the_answer_is_cut_where_the_line_is_already_closed() {
+        assert_eq!(
+            clean("erisci i numeri: \");", "x(\"ins", "\");\n}").as_deref(),
+            Some("erisci i numeri: ")
+        );
+        assert_eq!(
+            clean("n = 5;\nint other;", "int ", "").as_deref(),
+            Some("n = 5;")
+        );
+        assert_eq!(clean("  x", "a = ", "").as_deref(), Some("x"));
+        assert_eq!(clean("   ", "a", ""), None);
+        assert_eq!(clean("a\u{0}b", "a", ""), None);
     }
 }

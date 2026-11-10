@@ -51,7 +51,7 @@ Mostly the same as CLion. Ctrl+Shift+A finds any command if you forget one.
 | F7, F8, F9 | Step in, step over, resume |
 | Alt+F12 | Terminal |
 
-Gray suggestions finish the line you are typing from code you already wrote, and Tab accepts them. They can be turned off in Settings.
+Gray suggestions finish the line you are typing, and Tab accepts them. They come from code you already wrote and, when the built-in AI is installed, from the AI as well. Both can be turned off in Settings.
 
 Drag a selection to move it, or hold Ctrl to copy it. Ctrl+wheel changes the font size.
 

@@ -1,4 +1,5 @@
 import * as ed from './editor.js'
+import * as ai from './ai.js'
 import { $, h, invoke, listen, app, state, settings, reg, toast, guard, promptBox, palette, showMenu, basename, SEP, runAction } from './core.js'
 
 const compEl = $('completion'), hoverEl = $('hover'), sigEl = $('sig')
@@ -96,14 +97,25 @@ let viewKey = ''
 let ghostTimer = 0
 let ghostToken = 0
 
-function clearGhost() {
-  ghostToken++
-  clearTimeout(ghostTimer)
+let aiTimer = 0
+
+// Hides what is shown. Timers and requests in flight are left alone: whatever they bring is checked against the caret.
+function dropGhost() {
   if (!ghost) return
   ghost = null
   ed.setGhost('')
 }
+
+function clearGhost() {
+  ghostToken++
+  clearTimeout(ghostTimer)
+  clearTimeout(aiTimer)
+  dropGhost()
+}
 app.clearGhost = clearGhost
+
+/** The built-in AI finishes the line when it is installed and the setting is on. */
+const smart = () => settings.ghost && settings.ghostAi && ai.isBuiltin() && ai.ready()
 
 export function viewChanged(v) {
   viewKey = `${v.rev}:${v.line}:${v.col}`
@@ -115,7 +127,7 @@ export function viewChanged(v) {
     if (v.col === ghost.col) ghost.key = viewKey
     return
   }
-  clearGhost()
+  dropGhost()
 }
 
 async function requestGhost() {
@@ -132,9 +144,25 @@ async function requestGhost() {
 // Typing these can add a closing character of its own, which would change the rest of the line.
 const PAIRS = /[()[\]{}"'<>]/
 
+async function requestAi() {
+  if (!smart() || state.active === null || comp.open) return
+  await ed.idle()
+  invoke('ai_suggest', { id: state.active, size: ai.size() }).catch(() => {})
+}
+
+listen('ai-suggestion', (e) => {
+  const r = e.payload
+  if (!smart() || comp.open || r.key !== viewKey || ghost?.text === r.text) return
+  const [rev, line, col] = r.key.split(':').map(Number)
+  ghost = { text: r.text, key: r.key, rev, line, col, base: undefined }
+  ed.setGhost(r.text)
+})
+
 /** Typed text that matches the start of the suggestion eats into it, so it stays on screen. */
 export function typed(s = '') {
   clearTimeout(ghostTimer)
+  clearTimeout(aiTimer)
+  if (smart()) invoke('ai_suggest_cancel').catch(() => {})
   if (ghost && s && !PAIRS.test(s) && ghost.text.length > s.length && ghost.text.startsWith(s)) {
     const n = [...s].length
     ghost.text = ghost.text.slice(s.length)
@@ -144,6 +172,7 @@ export function typed(s = '') {
     return
   }
   ghostTimer = setTimeout(requestGhost, 60)
+  if (smart()) aiTimer = setTimeout(requestAi, 280)
 }
 
 function acceptGhost(all) {

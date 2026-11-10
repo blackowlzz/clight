@@ -66,6 +66,7 @@ export const settings = {
   updates: load('updates', true),
   termBar: load('termBar', false),
   ghost: load('ghost', true),
+  ghostAi: load('ghostAi', true),
   aiChat: load('aiChat', false),
   aiProvider: load('aiProvider', 'builtin'),
   aiSize: load('aiSize', 'small'),

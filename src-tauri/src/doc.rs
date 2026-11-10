@@ -773,6 +773,25 @@ impl Doc {
         ))
     }
 
+    /// What a code model needs: the start of the file when it is cut off, and the text around the caret.
+    pub fn windows(&self, before: usize, after: usize) -> (String, String, String) {
+        let total = self.rope.len_chars();
+        let from = self.cur.saturating_sub(before);
+        let to = (self.cur + after).min(total);
+        let head = if from > 0 {
+            let lines = self.rope.len_lines().min(14);
+            let end = self.rope.line_to_char(lines).min(500);
+            self.rope.slice(..end.min(from)).to_string()
+        } else {
+            String::new()
+        };
+        (
+            head,
+            self.rope.slice(from..self.cur).to_string(),
+            self.rope.slice(self.cur..to).to_string(),
+        )
+    }
+
     pub fn lines_for_suggest(&self) -> impl Iterator<Item = (usize, Cow<'_, str>)> {
         self.rope
             .lines()

@@ -746,6 +746,54 @@ fn doc_context(id: u32, max: usize, state: State<AppState>) -> Option<(String, S
     Some((name, doc.rope.slice(from..to).to_string()))
 }
 
+/// Asks the built-in AI to finish the line; the answer arrives as an `ai-suggestion` event.
+#[tauri::command]
+fn ai_suggest(id: u32, size: String, app: AppHandle, state: State<AppState>) {
+    let snapshot = {
+        let docs = state.docs.lock().unwrap();
+        let Some(doc) = docs.get(&id) else { return };
+        let Some((line, col, prefix, suffix)) = doc.line_context() else {
+            return;
+        };
+        if !suggest::suffix_is_closers(&suffix) || prefix.trim().chars().count() < 2 {
+            return;
+        }
+        let (head, before, after) = doc.windows(2000, 800);
+        let name = |d: &Doc| {
+            d.path
+                .file_name()
+                .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned())
+        };
+        let mut others: Vec<(bool, String, String)> = docs
+            .iter()
+            .filter(|(k, d)| **k != id && d.lang.lsp_id().is_some() && d.mtime.is_some())
+            .map(|(_, d)| {
+                let n = d.rope.len_chars().min(700);
+                (
+                    name(d).ends_with(".h"),
+                    name(d),
+                    d.rope.slice(..n).to_string(),
+                )
+            })
+            .collect();
+        others.sort_by_key(|o| !o.0);
+        ai::Snapshot {
+            key: format!("{}:{}:{}", doc.rev, line, col + 1),
+            file: name(doc),
+            head,
+            prefix: before,
+            suffix: after,
+            others: others.into_iter().take(2).map(|o| (o.1, o.2)).collect(),
+        }
+    };
+    ai::suggest(app, size, snapshot);
+}
+
+#[tauri::command]
+fn ai_suggest_cancel() {
+    ai::cancel_suggest();
+}
+
 #[derive(Serialize)]
 struct LineGhost {
     text: String,
@@ -1467,6 +1515,8 @@ fn main() {
             word_complete,
             line_suggest,
             ai_chat,
+            ai_suggest,
+            ai_suggest_cancel,
             ai_cancel,
             ai_models,
             doc_context,

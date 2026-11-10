@@ -314,6 +314,11 @@ function aiPage(rerender) {
       chatRow,
       provider,
       row('Size', 'You can install both and switch. Only one runs at a time', sizes),
+      row('Smart suggestions', 'The AI finishes your lines in gray while you type. It uses the processor for a moment after you pause', seg([[true, 'On'], [false, 'Off']], settings.ghostAi, (v) => {
+        save('ghostAi', v)
+        if (!v) invoke('ai_suggest_cancel').catch(() => {})
+        app.clearGhost?.()
+      })),
       row(`${m.label} AI · Qwen2.5-Coder ${m.params}`, `${m.tag}. Download ${m.download}. Memory ${m.ram} while it runs. Processor: ${m.cpu}. Answers: ${m.answers}. These are estimates. It starts by itself and stops after 5 idle minutes.`, box),
       h('p', { class: 'muted', style: 'padding:6px 0' }, `It runs on your computer and your code is not sent anywhere. ${ai.advice()}`.trim()),
     )
