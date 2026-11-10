@@ -14,7 +14,7 @@ On Windows the terminal and the debugger aren't there yet.
 
 CMake and a compiler. Everything else is optional and only turns on if it's installed:
 
-- `clangd` for completion, errors while you type, go to definition and rename
+- `clangd` for completion, go to definition and rename. It also gives the errors while you type, and without it they come from `gcc` or `clang` instead
 - `gdb` for debugging
 - `git` for the commit panel
 - `clang-format` for formatting
@@ -42,7 +42,7 @@ Mostly the same as CLion. Ctrl+Shift+A finds any command if you forget one.
 | F7, F8, F9 | Step in, step over, resume |
 | Alt+F12 | Terminal |
 
-From a terminal you can open the current folder with `clight .` or `cl .`. On the AppImage, turn that on from Help > Install clight and cl Commands.
+From a terminal you can open the current folder with `clight .` or `cl .`. On the AppImage, turn that on from Help > Install clight and cl Commands. On Windows the installer sets them up, so just open a new terminal afterwards. Inside a Visual Studio Developer Prompt `cl` is the MSVC compiler, so use `clight .` there.
 
 ## Building it yourself
 

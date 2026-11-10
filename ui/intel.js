@@ -29,7 +29,36 @@ export async function restartIntel() {
   } catch (e) {
     setLsp('error')
     console.warn(e)
+    if (String(e).includes('not installed') && !warnedNoClangd) {
+      warnedNoClangd = true
+      toast('clangd not found. Errors come from the compiler until you install LLVM')
+    }
+    state.tabs.filter((t) => !t.virtual).forEach((t) => syncDoc(t.id))
   }
+}
+
+let warnedNoClangd = false
+let checking = false
+let recheck = null
+
+async function compilerCheck(id) {
+  if (checking) {
+    recheck = id
+    return
+  }
+  checking = true
+  await invoke('syntax_check', { id }).catch(() => {})
+  checking = false
+  if (recheck !== null) {
+    const next = recheck
+    recheck = null
+    compilerCheck(next)
+  }
+}
+
+export function syncDoc(id) {
+  if (state.lsp === 'on') invoke('lsp_sync', { id }).catch(() => {})
+  else if (state.lsp === 'error') compilerCheck(id)
 }
 
 export async function stopIntel() {

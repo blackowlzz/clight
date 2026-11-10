@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(any(windows, test))]
+mod cli;
 #[cfg(unix)]
 mod debug;
 mod doc;
@@ -9,6 +11,7 @@ mod lexer;
 mod lsp;
 mod project;
 mod runner;
+mod syntax;
 #[cfg(unix)]
 mod term;
 mod update;
@@ -168,6 +171,12 @@ fn install_cli() -> Res<String> {
         installed.push(name);
     }
     Ok(installed.join(" and "))
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn install_cli() -> Res<String> {
+    cli::install()
 }
 
 fn stop_children(state: &AppState) {
@@ -519,6 +528,35 @@ struct Completions {
     prefix: String,
     incomplete: bool,
     items: Vec<Completion>,
+}
+
+#[tauri::command(async)]
+fn syntax_check(id: u32, app: AppHandle, state: State<'_, AppState>) -> Res<()> {
+    let (path, text, cpp, rev) = {
+        let docs = state.docs.lock().unwrap();
+        let doc = docs.get(&id).ok_or("Document is closed")?;
+        let is_source = doc
+            .path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| ["c", "cc", "cpp", "cxx"].contains(&e));
+        if !is_source || doc.lang.lsp_id().is_none() {
+            return Ok(());
+        }
+        (
+            doc.path.clone(),
+            doc.rope.to_string(),
+            doc.lang.lsp_id() == Some("cpp"),
+            doc.rev,
+        )
+    };
+    let issues = syntax::check(&path, text, cpp)?;
+    let mut docs = state.docs.lock().unwrap();
+    if let Some(doc) = docs.get_mut(&id).filter(|d| d.rev == rev) {
+        doc.diags = syntax::to_diags(doc, &issues);
+        let _ = app.emit("diag", id);
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -1166,6 +1204,11 @@ fn tune_webkit() {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(code) = cli::handle_flag() {
+        std::process::exit(code);
+    }
+
     #[cfg(target_os = "linux")]
     tune_webkit();
 
@@ -1213,8 +1256,9 @@ fn main() {
             dbg_input,
             #[cfg(unix)]
             dbg_stop,
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             install_cli,
+            syntax_check,
             clipboard_read,
             clipboard_write,
             doc_format,

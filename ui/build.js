@@ -3,6 +3,9 @@ import { $, h, invoke, listen, app, state, store, load, reg, toast, guard, modal
 
 const MAX_OUT = 3000
 const DIAG_RE = /^(.+?):(\d+):(?:(\d+):)?\s+(fatal error|error|warning|note):\s*(.*)/
+const MSVC_RE = /^\s*(?:\d+>)?(.+?)\((\d+)(?:,(\d+))?(?:,\d+)*\)\s*:\s+(fatal error|error|warning|note)(?:\s+\w+)?:\s*(.*?)(?:\s+\[[^\]]*\])?$/
+const FAILURE_RE = /(?:^|\s)(?:fatal )?error(?: [A-Z]+\d+)?:|undefined reference to|^CMake Error|\*\*\* .*Error \d+/
+const ENGLISH_ENV = [['LC_ALL', 'C'], ['LANGUAGE', 'en'], ['VSLANG', '1033']]
 
 class Output {
   constructor(el, stdin = null) {
@@ -30,7 +33,7 @@ class Output {
 
   line(text, cls) {
     const el = document.createElement('div')
-    const m = cls ? null : DIAG_RE.exec(text)
+    const m = cls ? null : DIAG_RE.exec(text) ?? MSVC_RE.exec(text)
     if (m) {
       const path = m[1].startsWith('/') || /^[A-Za-z]:/.test(m[1]) ? m[1] : join(this.cwd, m[1])
       el.className = m[4] === 'warning' ? 'wa' : m[4] === 'note' ? 'no' : 'er'
@@ -39,6 +42,7 @@ class Output {
       el.dataset.col = m[3] ?? '1'
       if (m[4] !== 'note') buildIssues.push({ path, line: m[2] - 1, col: (m[3] ?? 1) - 1, sev: m[4] === 'warning' ? 2 : 1, msg: m[5] })
     } else if (cls) el.className = cls
+    else if (FAILURE_RE.test(text)) el.className = 'er'
     el.textContent = text || ' '
     return el
   }
@@ -92,7 +96,7 @@ export function syncButtons() {
   $('stop').hidden = !busy
 }
 
-export function runTask(view, title, program, args, cwd, { background = true, interactive = false, env = [] } = {}) {
+export function runTask(view, title, program, args, cwd, { background = true, interactive = false, env = ENGLISH_ENV } = {}) {
   return new Promise((resolve, reject) => {
     current = view
     view.cwd = cwd

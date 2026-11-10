@@ -552,7 +552,7 @@ async function ensureTab(d) {
     state.tabs.push(tab)
     const lines = state.bps.get(d.path)
     if (lines?.size) await invoke('doc_apply', { id: d.id, cmds: [{ t: 'set_breakpoints', lines: [...lines] }], top: 0, rows: 1, reveal: false })
-    if (state.lsp === 'on') invoke('lsp_sync', { id: d.id }).catch(() => {})
+    intel.syncDoc(d.id)
     renderTabs()
   }
   return tab
@@ -737,9 +737,9 @@ ed.configure({
     if (lastRev.get(id) !== v.rev) {
       const seen = lastRev.has(id)
       lastRev.set(id, v.rev)
-      if (seen && state.lsp === 'on') {
+      if (seen) {
         clearTimeout(lspTimer)
-        lspTimer = setTimeout(() => invoke('lsp_sync', { id }).catch(() => {}), 450)
+        lspTimer = setTimeout(() => intel.syncDoc(id), 450)
       }
     }
     if (findOpen) {
@@ -1080,7 +1080,8 @@ function keymap() {
 reg('keymap', 'Keyboard Shortcuts', null, keymap)
 reg('install-cli', 'Install clight and cl Commands', null, async () => {
   const names = await invoke('install_cli')
-  toast(names ? `Installed ${names} in ~/.local/bin` : 'Those command names are already taken')
+  if (SEP === '\\') toast(`Installed ${names}. Open a new terminal to use them`)
+  else toast(names ? `Installed ${names} in ~/.local/bin` : 'Those command names are already taken')
 })
 
 $('debug').addEventListener('click', () => runAction('debug'))

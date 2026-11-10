@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "clight"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "ropey",
@@ -390,6 +390,7 @@ dependencies = [
  "tauri-plugin-updater",
  "unicode-width",
  "vte",
+ "winreg",
 ]
 
 [[package]]

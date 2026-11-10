@@ -73,6 +73,42 @@ pub fn parse_workspace_edit(v: &Value) -> Vec<FileEdits> {
     out
 }
 
+fn same_file(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
+    } else {
+        a == b
+    }
+}
+
+/// The LLVM and MSYS2 installers don't put clangd on the Path by default.
+fn clangd_program() -> PathBuf {
+    if cfg!(windows) {
+        let on_path = std::env::var_os("PATH")
+            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("clangd.exe").is_file()));
+        if !on_path {
+            let llvm = ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
+                .iter()
+                .filter_map(std::env::var_os)
+                .flat_map(|d| {
+                    let d = PathBuf::from(d);
+                    [d.join(r"LLVM\bin"), d.join(r"Programs\LLVM\bin")]
+                });
+            let msys2 = ["ucrt64", "clang64", "mingw64"]
+                .iter()
+                .map(|e| Path::new(r"C:\msys64").join(e).join("bin"));
+            if let Some(found) = llvm
+                .chain(msys2)
+                .map(|d| d.join("clangd.exe"))
+                .find(|p| p.is_file())
+            {
+                return found;
+            }
+        }
+    }
+    PathBuf::from("clangd")
+}
+
 pub fn uri_from_path(p: &Path) -> String {
     let mut out = String::from("file://");
     let s = p.to_string_lossy().replace('\\', "/");
@@ -125,7 +161,7 @@ impl Lsp {
         build_dir: &Path,
         index: bool,
     ) -> Result<Arc<Lsp>, String> {
-        let mut cmd = Command::new("clangd");
+        let mut cmd = Command::new(clangd_program());
         clean_env(&mut cmd);
         cmd.arg(format!("--background-index={index}"));
         cmd.args([
@@ -146,7 +182,13 @@ impl Lsp {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         lower_priority(&mut cmd);
-        let mut child = cmd.spawn().map_err(|e| format!("clangd: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                "clangd is not installed".to_string()
+            } else {
+                format!("clangd: {e}")
+            }
+        })?;
         let stdin = child.stdin.take().ok_or("clangd: no stdin")?;
         let stdout = child.stdout.take().ok_or("clangd: no stdout")?;
         let lsp = Arc::new(Lsp {
@@ -284,7 +326,8 @@ impl Lsp {
                 };
                 let state = app.state::<AppState>();
                 let mut docs = state.docs.lock().unwrap();
-                let Some((&id, doc)) = docs.iter_mut().find(|(_, d)| d.path == path) else {
+                let Some((&id, doc)) = docs.iter_mut().find(|(_, d)| same_file(&d.path, &path))
+                else {
                     return;
                 };
                 doc.diags = parse_diags(

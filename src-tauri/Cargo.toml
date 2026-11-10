@@ -1,6 +1,6 @@
 [package]
 name = "clight"
-version = "0.1.0"
+version = "0.1.1"
 description = "A C/C++ IDE that runs on very low-end machines"
 edition = "2021"
 
@@ -22,6 +22,9 @@ selftest = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
 
 [profile.release]
 opt-level = "s"
