@@ -8,7 +8,7 @@ It's still early, so expect rough edges. If something breaks, please open an iss
 
 Get the latest version from [Releases](https://github.com/blackowlzz/clight/releases). There's an AppImage, a `.deb` and an `.rpm` for Linux, and an installer for Windows. After that, clight updates itself.
 
-On Windows the terminal and the debugger aren't there yet.
+On Windows the debugger isn't there yet.
 
 ## What you need
 

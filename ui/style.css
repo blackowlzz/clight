@@ -292,16 +292,24 @@ e { color: var(--faint); background: var(--active); border-radius: 2px; }
 
 #v-terminal { overflow: hidden; display: flex; flex-direction: column; }
 .termtabs { display: flex; gap: 1px; align-items: center; }
-#term { position: relative; flex: 1; min-height: 0; margin: 0 0 4px 12px; overflow: hidden; font: var(--fs)/var(--lh) 'JetBrains Mono Variable', 'Symbols Nerd Font Mono', 'MesloLGL Nerd Font Mono', 'FantasqueSansM Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'MesloLGS NF', 'Hack Nerd Font', 'DejaVu Sans Mono', monospace; letter-spacing: 0; font-variant-ligatures: none; color: var(--code); user-select: text; -webkit-user-select: text; cursor: text; }
-#term .tr { position: absolute; left: 0; right: 0; height: var(--lh); white-space: pre; contain: layout style; }
-#term .b { font-weight: 600; color: var(--text); }
-#term .d { color: var(--faint); }
-#term .i { font-style: italic; }
-#term .u { text-decoration: underline; }
-#term .s { color: var(--text); font-weight: 600; }
-#term .v { background: var(--text); color: var(--bg); }
-#term-cursor { position: absolute; width: 1ch; height: var(--lh); background: var(--text); opacity: .7; pointer-events: none; }
-#term-input { position: absolute; left: -100px; width: 10px; height: 10px; opacity: 0; border: 0; padding: 0; }
+.tgrid { position: relative; flex: 1; min-height: 0; margin: 0 0 4px 12px; overflow: hidden; font: var(--fs)/var(--lh) 'JetBrains Mono Variable', 'Symbols Nerd Font Mono', 'MesloLGL Nerd Font Mono', 'FantasqueSansM Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'FiraCode Nerd Font', 'MesloLGS NF', 'Hack Nerd Font', 'DejaVu Sans Mono', monospace; letter-spacing: 0; font-variant-ligatures: none; color: var(--code); user-select: text; -webkit-user-select: text; cursor: text; }
+.tgrid .tr { position: absolute; left: 0; right: 0; height: var(--lh); white-space: pre; contain: layout style; }
+.tgrid .b { font-weight: 600; color: var(--text); }
+.tgrid .d { color: var(--faint); }
+.tgrid .i { font-style: italic; }
+.tgrid .u { text-decoration: underline; }
+.tgrid .s { color: var(--text); font-weight: 600; }
+.tgrid .v { background: var(--text); color: var(--bg); }
+.tcursor { position: absolute; width: 1ch; height: var(--lh); background: var(--text); opacity: .7; pointer-events: none; }
+.tinput { position: absolute; left: -100px; width: 10px; height: 10px; opacity: 0; border: 0; padding: 0; }
+.tgrid .c1 { color: var(--faint); }
+.tgrid .c2 { color: var(--err); }
+.tgrid .c3 { color: var(--git-add); }
+.tgrid .c4 { color: var(--warn); }
+.tgrid .c5 { color: var(--git-mod); }
+.tgrid .c6 { color: var(--k); }
+.tgrid .c7 { color: var(--o); }
+.tgrid .c8 { color: var(--text); }
 
 .dbg { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(200px, 1.6fr) minmax(200px, 1.5fr); height: 100%; min-height: 0; border-top: 1px solid var(--line); }
 .dbg > div { min-height: 0; overflow: auto; border-right: 1px solid var(--line); }

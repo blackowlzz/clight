@@ -1,5 +1,6 @@
 import * as ed from './editor.js'
 import { $, h, invoke, listen, app, state, store, load, reg, toast, guard, modal, join, activeTab, showMenu, SEP } from './core.js'
+import * as runTerm from './runterm.js'
 
 const MAX_OUT = 3000
 const DIAG_RE = /^(.+?):(\d+):(?:(\d+):)?\s+(fatal error|error|warning|note):\s*(.*)/
@@ -334,9 +335,41 @@ export async function buildForRun() {
   return { exe, cwd: c.cwd || ((await hasCMake()) ? state.build : state.root) }
 }
 
+const UNIX_CRASHES = { 4: 'illegal instruction', 6: 'the program aborted', 7: 'invalid memory access', 8: 'arithmetic error', 11: 'invalid memory access' }
+
+function exitNote({ code, signal }) {
+  const reset = '\x1b[0m\r\n'
+  const crash = stopRequested ? null : (WINDOWS_CRASHES[code] ?? UNIX_CRASHES[signal])
+  if (crash) {
+    const id = code === null ? `signal ${signal}` : `0x${(code >>> 0).toString(16).toUpperCase()}`
+    return `${reset}\x1b[31mProgram crashed: ${crash} (${id})${reset}`
+  }
+  const text = stopRequested || code === null ? 'Process finished (stopped)' : `Process finished with exit code ${code}`
+  return `${reset}\x1b[2m${text}${reset}`
+}
+
+let stopRequested = false
+
 async function doRun() {
   const b = await buildForRun()
   if (!b) return
+  stopRequested = false
+  app.showBottom('run')
+  setRunning(true)
+  $('st-msg').textContent = 'Running'
+  let result = null
+  try {
+    result = await runTerm.start({ program: b.exe, args: parsedArgs(), cwd: b.cwd, env: parsedEnv(), banner: `\x1b[2m${b.exe}\x1b[0m\r\n` })
+  } catch {
+    runTerm.usePipes()
+  }
+  setRunning(false)
+  $('st-msg').textContent = ''
+  if (result) {
+    await runTerm.note(exitNote(result))
+    if (!$('work').hidden) ed.focus()
+    return
+  }
   runOut.clear()
   try {
     const code = await runTask(runOut, b.exe, b.exe, parsedArgs(), b.cwd, { background: false, interactive: true, env: parsedEnv() })
@@ -371,7 +404,10 @@ async function reload() {
 
 async function stop() {
   if (state.debugging) await app.debug.stop()
-  else await invoke('task_kill')
+  else {
+    stopRequested = true
+    await invoke('task_kill')
+  }
 }
 
 $('build').addEventListener('click', doBuild)
@@ -394,6 +430,12 @@ reg('build', 'Build Project', 'C-F9', doBuild)
 reg('run', 'Run', 'S-F10', doRun)
 reg('stop', 'Stop', 'C-F2', stop)
 app.rerun = doRun
+export const runTermFocused = () => runTerm.hasFocus()
+export const runTermShown = () => runTerm.shown()
+export function clearRun() {
+  if (runTerm.inUse()) runTerm.clear()
+  else runOut.clear()
+}
 app.stopTask = stop
 reg('clean', 'Clean', null, clean)
 reg('ctest', 'Run Tests (CTest)', null, ctest)

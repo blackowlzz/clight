@@ -82,8 +82,10 @@ mod windows {
             Ok(v) => {
                 let wide: Vec<u16> = v
                     .bytes
-                    .chunks_exact(2)
-                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| u16::from_le_bytes(*b))
                     .collect();
                 let text = String::from_utf16(&wide).map_err(|e| e.to_string())?;
                 (text.trim_end_matches('\0').to_string(), v.vtype)

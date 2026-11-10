@@ -12,7 +12,6 @@ mod lsp;
 mod project;
 mod runner;
 mod syntax;
-#[cfg(unix)]
 mod term;
 mod tools;
 mod update;
@@ -34,15 +33,14 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const MAX_FILE: u64 = 64 << 20;
 const LSP_TIMEOUT: Duration = Duration::from_secs(8);
+const RUN_TERM: u32 = 0;
 
 pub struct AppState {
     pub docs: Mutex<HashMap<u32, Doc>>,
     next_doc: AtomicU32,
     lsp: Mutex<Option<Arc<Lsp>>>,
     runner: Arc<Runner>,
-    #[cfg(unix)]
     terms: Mutex<HashMap<u32, Arc<term::Term>>>,
-    #[cfg(unix)]
     next_term: AtomicU32,
     #[cfg(unix)]
     dbg: Mutex<Option<Arc<debug::Debugger>>>,
@@ -183,9 +181,16 @@ fn install_cli() -> Res<String> {
 
 fn stop_children(state: &AppState) {
     state.runner.kill();
+    let terms: Vec<_> = state.terms.lock().unwrap().drain().collect();
+    for (id, t) in terms {
+        if id == RUN_TERM {
+            t.stop();
+        } else {
+            t.kill();
+        }
+    }
     #[cfg(unix)]
     {
-        state.terms.lock().unwrap().values().for_each(|t| t.kill());
         let d = state.dbg.lock().unwrap().take();
         if let Some(d) = d {
             d.stop();
@@ -450,6 +455,56 @@ fn task_stdin(text: String, state: State<AppState>) -> Res<()> {
 #[tauri::command(async)]
 fn task_kill(state: State<AppState>) {
     state.runner.kill();
+    let run = state.terms.lock().unwrap().get(&RUN_TERM).cloned();
+    if let Some(t) = run {
+        t.stop();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command(async)]
+fn run_start(
+    program: String,
+    args: Vec<String>,
+    cwd: String,
+    env: Vec<(String, String)>,
+    cols: usize,
+    rows: usize,
+    banner: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Res<()> {
+    #[cfg(feature = "selftest")]
+    if std::env::var_os("CLIGHT_NO_PTY").is_some() {
+        return Err("disabled by the self test".into());
+    }
+    // Held across the spawn so a program that exits at once is already registered.
+    let mut terms = state.terms.lock().unwrap();
+    if let Some(old) = terms.remove(&RUN_TERM) {
+        old.stop();
+    }
+    let launch = term::Launch {
+        program,
+        args,
+        cwd,
+        env,
+    };
+    let t = term::Term::run(app, RUN_TERM, launch, cols.max(2), rows.max(2), &banner)?;
+    terms.insert(RUN_TERM, t);
+    Ok(())
+}
+
+#[tauri::command]
+fn term_note(id: u32, text: String, state: State<AppState>) -> Res<()> {
+    let t = state
+        .terms
+        .lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or("Terminal is closed")?;
+    t.note(&text);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1137,7 +1192,6 @@ fn git_refresh(id: u32, state: State<'_, AppState>) {
     }
 }
 
-#[cfg(unix)]
 #[tauri::command]
 fn term_open(
     cwd: String,
@@ -1152,7 +1206,6 @@ fn term_open(
     Ok(id)
 }
 
-#[cfg(unix)]
 #[tauri::command]
 fn term_view(id: u32, offset: usize, full: bool, state: State<AppState>) -> Res<term::TermView> {
     let t = state
@@ -1167,7 +1220,6 @@ fn term_view(id: u32, offset: usize, full: bool, state: State<AppState>) -> Res<
     Ok(v)
 }
 
-#[cfg(unix)]
 #[tauri::command]
 fn term_input(id: u32, data: String, state: State<AppState>) -> Res<()> {
     let t = state
@@ -1180,7 +1232,6 @@ fn term_input(id: u32, data: String, state: State<AppState>) -> Res<()> {
     t.write(data.as_bytes())
 }
 
-#[cfg(unix)]
 #[tauri::command]
 fn term_resize(id: u32, cols: usize, rows: usize, state: State<AppState>) {
     if let Some(t) = state.terms.lock().unwrap().get(&id).cloned() {
@@ -1188,7 +1239,6 @@ fn term_resize(id: u32, cols: usize, rows: usize, state: State<AppState>) {
     }
 }
 
-#[cfg(unix)]
 #[tauri::command(async)]
 fn term_info(id: u32, state: State<'_, AppState>) -> Res<term::TermInfo> {
     let t = state
@@ -1201,8 +1251,7 @@ fn term_info(id: u32, state: State<'_, AppState>) -> Res<term::TermInfo> {
     Ok(t.info())
 }
 
-#[cfg(unix)]
-#[tauri::command]
+#[tauri::command(async)]
 fn term_close(id: u32, state: State<AppState>) {
     if let Some(t) = state.terms.lock().unwrap().remove(&id) {
         t.kill();
@@ -1288,9 +1337,7 @@ fn main() {
             next_doc: AtomicU32::new(1),
             lsp: Mutex::new(None),
             runner: Arc::new(Runner::default()),
-            #[cfg(unix)]
             terms: Mutex::new(HashMap::new()),
-            #[cfg(unix)]
             next_term: AtomicU32::new(1),
             #[cfg(unix)]
             dbg: Mutex::new(None),
@@ -1304,17 +1351,11 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(feature = "selftest")]
             selftest_log,
-            #[cfg(unix)]
             term_open,
-            #[cfg(unix)]
             term_view,
-            #[cfg(unix)]
             term_input,
-            #[cfg(unix)]
             term_resize,
-            #[cfg(unix)]
             term_info,
-            #[cfg(unix)]
             term_close,
             #[cfg(unix)]
             dbg_start,
@@ -1385,6 +1426,8 @@ fn main() {
             task_start,
             task_stdin,
             task_kill,
+            run_start,
+            term_note,
             cmake_prepare,
             cmake_targets,
             make_dirs,

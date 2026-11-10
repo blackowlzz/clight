@@ -5,6 +5,7 @@ import * as build from './build.js'
 import * as git from './git.js'
 import * as update from './update.js'
 import * as tools from './tools.js'
+import { TERMINAL_PASS } from './termkeys.js'
 import * as theme from './theme.js'
 import * as settingsPage from './settings.js'
 import { renderHome, tile } from './welcome.js'
@@ -101,7 +102,8 @@ async function showBottom(name, force = true) {
   if (name === 'build' || name === 'run') {
     const out = name === 'build' ? build.buildOut : build.runOut
     if (name === 'run') acts.append(iconBtn('refresh', 'Rerun (Shift+F10)', () => guard(app.rerun())), iconBtn('stop', 'Stop (Ctrl+F2)', () => guard(app.stopTask())))
-    acts.append(h('button', { class: 'plain', onclick: () => out.clear() }, 'Clear'))
+    acts.append(h('button', { class: 'plain', onclick: () => (name === 'run' ? build.clearRun() : out.clear()) }, 'Clear'))
+    if (name === 'run') build.runTermShown()
   } else if (name === 'debug') {
     const d = await loadDebug()
     if (state.bottom === 'debug') {
@@ -1231,7 +1233,6 @@ const keyMap = () => {
   return byKey
 }
 
-const TERMINAL_PASS = new Set(['A-F12', 'A-1', 'A-7', 'A-0', 'A-3', 'A-b', 'A-4', 'A-5', 'A-6', 'F11', 'C-F9', 'S-F10', 'S-F9', 'C-F2', 'C-p', 'C-S-a'])
 
 document.addEventListener('keydown', async (e) => {
   if (e.key === 'Escape') {
@@ -1246,7 +1247,7 @@ document.addEventListener('keydown', async (e) => {
   }
   if (modalOpen()) return
   const name = keyName(e)
-  if (termMod?.hasFocus() && !TERMINAL_PASS.has(name)) return
+  if ((termMod?.hasFocus() || build.runTermFocused()) && !TERMINAL_PASS.has(name)) return
   if (['S-F9', 'F7', 'F8', 'F9', 'S-F8', 'A-F9'].includes(name)) await loadDebug()
   const a = keyMap().get(name)
   if (!a) return
@@ -1256,7 +1257,7 @@ document.addEventListener('keydown', async (e) => {
 })
 
 document.addEventListener('contextmenu', (e) => {
-  if (!e.target.closest('input, .out, #hover, textarea.field, #term')) e.preventDefault()
+  if (!e.target.closest('input, .out, #hover, textarea.field, .tgrid')) e.preventDefault()
 })
 
 $('w-min').addEventListener('click', () => win.minimize())
@@ -1333,7 +1334,7 @@ function drag(el, varName, min, max, getBase) {
 drag($('side-rz'), '--side', 140, () => innerWidth * 0.5, (e) => e.clientX)
 drag($('panel-rz'), '--panel', 90, () => innerHeight - 180, (e) => innerHeight - 22 - e.clientY)
 
-if (SEP === '\\') for (const el of document.querySelectorAll('#debug, [data-bottom="terminal"], [data-bottom="debug"]')) el.hidden = true
+if (SEP === '\\') for (const el of document.querySelectorAll('#debug, [data-bottom="debug"]')) el.hidden = true
 
 async function start() {
   root.dataset.focus = ''

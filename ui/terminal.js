@@ -1,10 +1,11 @@
 import * as ed from './editor.js'
-import { $, h, icon, invoke, listen, state, settings, load, store, keyName, toast } from './core.js'
+import { $, h, icon, invoke, listen, state, settings, load, store, keyName, toast, SEP } from './core.js'
+import { termSequence } from './termkeys.js'
 
 const view = $('v-terminal')
-const termEl = h('div', { id: 'term' })
-const cursorEl = h('div', { id: 'term-cursor' })
-const input = h('textarea', { id: 'term-input', autocapitalize: 'off', spellcheck: 'false' })
+const termEl = h('div', { id: 'term', class: 'tgrid' })
+const cursorEl = h('div', { id: 'term-cursor', class: 'tcursor' })
+const input = h('textarea', { id: 'term-input', class: 'tinput', autocapitalize: 'off', spellcheck: 'false' })
 termEl.append(cursorEl, input)
 
 const cmdInput = h('input', { id: 'term-cmd', spellcheck: 'false', autocomplete: 'off', autocapitalize: 'off', placeholder: 'Type a command' })
@@ -21,7 +22,7 @@ let draft = ''
 let cwd = ''
 let infoTimer = 0
 
-const barActive = () => settings.termBar && !cur()?.alt
+const barActive = () => settings.termBar && SEP !== '\\' && !cur()?.alt
 
 export function syncBar() {
   bar.hidden = !barActive()
@@ -287,13 +288,6 @@ function send(data) {
   invoke('term_input', { id: t.id, data })
 }
 
-const SPECIAL = {
-  Enter: '\r', Backspace: '\x7f', Tab: '\t', Escape: '\x1b', 'S-Tab': '\x1b[Z',
-  Home: '\x1b[H', End: '\x1b[F', PageUp: '\x1b[5~', PageDown: '\x1b[6~', Delete: '\x1b[3~', Insert: '\x1b[2~',
-  F1: '\x1bOP', F2: '\x1bOQ', F3: '\x1bOR', F4: '\x1bOS', F5: '\x1b[15~', F6: '\x1b[17~', F7: '\x1b[18~', F8: '\x1b[19~', F9: '\x1b[20~', F10: '\x1b[21~', F11: '\x1b[23~', F12: '\x1b[24~',
-}
-const ARROW = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D' }
-
 input.addEventListener('keydown', (e) => {
   if (e.isComposing) return
   const name = keyName(e)
@@ -305,29 +299,10 @@ input.addEventListener('keydown', (e) => {
   if (name === 'C-S-v') return
   if (name === 'A-F12') return
 
-  if (ARROW[e.key]) {
+  const seq = termSequence(e, name, cur()?.app)
+  if (seq !== null) {
     e.preventDefault()
-    const mod = 1 + (e.shiftKey ? 1 : 0) + (e.altKey ? 2 : 0) + (e.ctrlKey ? 4 : 0)
-    send(mod > 1 ? `\x1b[1;${mod}${ARROW[e.key]}` : `\x1b${cur()?.app ? 'O' : '['}${ARROW[e.key]}`)
-    return
-  }
-  if (SPECIAL[name] ?? (e.shiftKey ? undefined : SPECIAL[e.key])) {
-    e.preventDefault()
-    send(SPECIAL[name] ?? SPECIAL[e.key])
-    return
-  }
-  if (e.ctrlKey && !e.altKey && e.key.length === 1) {
-    const k = e.key.toLowerCase()
-    const code = k >= 'a' && k <= 'z' ? k.charCodeAt(0) - 96 : { '[': 27, '\\': 28, ']': 29, '^': 30, _: 31, ' ': 0 }[k]
-    if (code !== undefined) {
-      e.preventDefault()
-      send(String.fromCharCode(code))
-    }
-    return
-  }
-  if (e.altKey && !e.ctrlKey && e.key.length === 1) {
-    e.preventDefault()
-    send('\x1b' + e.key)
+    send(seq)
   }
 })
 

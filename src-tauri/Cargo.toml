@@ -29,6 +29,8 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
+portable-pty = "0.9"
+anyhow = "1"
 
 [profile.release]
 opt-level = "s"

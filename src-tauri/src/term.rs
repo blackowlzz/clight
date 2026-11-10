@@ -1,21 +1,25 @@
 use serde::Serialize;
 use std::collections::VecDeque;
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
 const MAX_SCROLLBACK: usize = 3000;
 
-const BOLD: u8 = 1;
-const DIM: u8 = 2;
-const ITALIC: u8 = 4;
-const UNDER: u8 = 8;
-const INVERSE: u8 = 16;
-const STRONG: u8 = 32;
+const BOLD: u16 = 1;
+const DIM: u16 = 2;
+const ITALIC: u16 = 4;
+const UNDER: u16 = 8;
+const INVERSE: u16 = 16;
+const STRONG: u16 = 32;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct Cell {
     c: char,
-    a: u8,
+    a: u16,
 }
 const BLANK: Cell = Cell { c: ' ', a: 0 };
 const SPACER: char = '\0';
@@ -50,8 +54,8 @@ pub struct Grid {
     y: usize,
     top: usize,
     bottom: usize,
-    attr: u8,
-    saved: (usize, usize, u8),
+    attr: u16,
+    saved: (usize, usize, u16),
     wrap_pending: bool,
     app_cursor: bool,
     bracketed: bool,
@@ -195,6 +199,10 @@ impl Grid {
         self.mark(0, self.rows - 1);
     }
 
+    fn set_fg(&mut self, color: u16) {
+        self.attr = (self.attr & 0xff) | (color << 8);
+    }
+
     fn sgr(&mut self, p: &[u16]) {
         let by_luma = |l: u32| {
             if l < 85 {
@@ -221,9 +229,12 @@ impl Grid {
                 23 => self.attr &= !ITALIC,
                 24 => self.attr &= !UNDER,
                 27 => self.attr &= !INVERSE,
-                30 | 90 => self.attr = (self.attr & !STRONG) | DIM,
-                31 | 35 | 91 | 95 => self.attr = (self.attr & !DIM) | STRONG,
-                32..=34 | 36 | 37 | 92..=94 | 96 | 97 | 39 => self.attr &= !(STRONG | DIM),
+                30..=37 => self.set_fg(p[i] - 29),
+                90..=97 => self.set_fg(p[i] - 89),
+                39 => {
+                    self.set_fg(0);
+                    self.attr &= !(STRONG | DIM);
+                }
                 38 | 48 => {
                     let fg = p[i] == 38;
                     let mut luma = None;
@@ -241,6 +252,10 @@ impl Grid {
                                 232..=255 => 8 + (n - 232) * 10,
                                 _ => 150,
                             });
+                            if fg && n < 16 {
+                                self.set_fg(n as u16 % 8 + 1);
+                                luma = None;
+                            }
                             i += 2;
                         }
                         Some(2) => {
@@ -267,8 +282,8 @@ impl Grid {
 
     fn row_html(line: &[Cell], out: &mut String) {
         let end = line.iter().rposition(|c| *c != BLANK).map_or(0, |i| i + 1);
-        let mut cur = 0u8;
-        let close = |a: u8, out: &mut String| {
+        let mut cur = 0u16;
+        let close = |a: u16, out: &mut String| {
             if a != 0 {
                 out.push_str("</span>");
             }
@@ -293,6 +308,9 @@ impl Grid {
                         if cur & bit != 0 {
                             out.push_str(name);
                         }
+                    }
+                    if cur >> 8 != 0 {
+                        out.push_str(&format!("c{} ", cur >> 8));
                     }
                     out.push_str("\">");
                 }
@@ -601,18 +619,78 @@ pub struct Inner {
     pub grid: Grid,
 }
 
+impl Inner {
+    fn feed(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let Inner { parser, grid } = self;
+        parser.advance(grid, bytes);
+        grid.take_reply()
+    }
+}
+
+pub struct Launch {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub env: Vec<(String, String)>,
+}
+
+#[derive(Clone, Copy)]
+enum OnExit {
+    CloseTab,
+    ReportRun,
+}
+
+#[derive(Serialize, Clone)]
+struct RunExit {
+    code: Option<i32>,
+    signal: Option<i32>,
+}
+
+fn announce_exit(
+    app: &AppHandle,
+    id: u32,
+    on_exit: OnExit,
+    code: Option<i32>,
+    signal: Option<i32>,
+) {
+    let _ = match on_exit {
+        OnExit::CloseTab => app.emit("term-exit", id),
+        OnExit::ReportRun => app.emit("run-exit", RunExit { code, signal }),
+    };
+}
+
+fn pump(t: &Term, app: &AppHandle, id: u32, mut reader: impl Read) {
+    let mut buf = [0u8; 16 * 1024];
+    while let Ok(n) = reader.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        let reply = t.inner.lock().unwrap().feed(&buf[..n]);
+        if !reply.is_empty() {
+            let _ = t.write(&reply);
+        }
+        if !t.notified.swap(true, Ordering::AcqRel) {
+            let _ = app.emit("term-dirty", id);
+        }
+    }
+}
+
+impl Term {
+    pub fn note(&self, text: &str) {
+        self.inner.lock().unwrap().feed(text.as_bytes());
+    }
+}
+
 pub use pty::*;
 
+#[cfg(unix)]
 mod pty {
     use super::*;
     use crate::runner::RawFd;
     use std::fs::File;
-    use std::io::{Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
     use std::process::{Command, Stdio};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-    use tauri::{AppHandle, Emitter};
 
     pub struct Term {
         pub inner: Mutex<Inner>,
@@ -620,6 +698,7 @@ mod pty {
         pid: u32,
         fd: RawFd,
         pub notified: AtomicBool,
+        running: AtomicBool,
         last_dir: Mutex<(String, Option<String>)>,
     }
 
@@ -670,13 +749,39 @@ mod pty {
             cols: usize,
             rows: usize,
         ) -> Result<Arc<Term>, String> {
-            use std::os::unix::process::CommandExt;
-            let (master, slave) = open_pty(cols, rows)?;
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
             let mut cmd = Command::new(&shell);
+            cmd.current_dir(cwd);
+            Self::start(app, id, cmd, cols, rows, "", OnExit::CloseTab)
+        }
+
+        pub fn run(
+            app: AppHandle,
+            id: u32,
+            launch: Launch,
+            cols: usize,
+            rows: usize,
+            banner: &str,
+        ) -> Result<Arc<Term>, String> {
+            let mut cmd = Command::new(&launch.program);
+            cmd.args(&launch.args)
+                .envs(launch.env.iter().map(|(k, v)| (k, v)))
+                .current_dir(&launch.cwd);
+            Self::start(app, id, cmd, cols, rows, banner, OnExit::ReportRun)
+        }
+
+        fn start(
+            app: AppHandle,
+            id: u32,
+            mut cmd: Command,
+            cols: usize,
+            rows: usize,
+            banner: &str,
+            on_exit: OnExit,
+        ) -> Result<Arc<Term>, String> {
+            let (master, slave) = open_pty(cols, rows)?;
             crate::runner::clean_env(&mut cmd);
-            cmd.current_dir(cwd)
-                .env("TERM", "xterm-256color")
+            cmd.env("TERM", "xterm-256color")
                 .env("COLORTERM", "")
                 .stdin(Stdio::from(slave.try_clone().map_err(|e| e.to_string())?))
                 .stdout(Stdio::from(slave.try_clone().map_err(|e| e.to_string())?))
@@ -688,9 +793,10 @@ mod pty {
                     Ok(())
                 });
             }
-            let child = cmd.spawn().map_err(|e| format!("{shell}: {e}"))?;
-            let pid = child.id();
-            let mut reader = master.try_clone().map_err(|e| e.to_string())?;
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| format!("{}: {e}", cmd.get_program().to_string_lossy()))?;
+            let reader = master.try_clone().map_err(|e| e.to_string())?;
             let term = Arc::new(Term {
                 inner: Mutex::new(Inner {
                     parser: Parser::new(),
@@ -698,33 +804,24 @@ mod pty {
                 }),
                 fd: master.as_raw_fd(),
                 writer: Mutex::new(master),
-                pid,
+                pid: child.id(),
                 notified: AtomicBool::new(false),
+                running: AtomicBool::new(true),
                 last_dir: Mutex::new((String::new(), None)),
             });
+            term.note(banner);
             let t = term.clone();
             std::thread::spawn(move || {
-                let mut child = child;
-                let mut buf = [0u8; 16 * 1024];
-                while let Ok(n) = reader.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    let reply = {
-                        let mut g = t.inner.lock().unwrap();
-                        let Inner { parser, grid } = &mut *g;
-                        parser.advance(grid, &buf[..n]);
-                        grid.take_reply()
-                    };
-                    if !reply.is_empty() {
-                        let _ = t.write(&reply);
-                    }
-                    if !t.notified.swap(true, Ordering::AcqRel) {
-                        let _ = app.emit("term-dirty", id);
-                    }
-                }
-                let _ = child.wait();
-                let _ = app.emit("term-exit", id);
+                pump(&t, &app, id, reader);
+                let status = child.wait().ok();
+                t.running.store(false, Ordering::SeqCst);
+                announce_exit(
+                    &app,
+                    id,
+                    on_exit,
+                    status.and_then(|s| s.code()),
+                    status.and_then(|s| s.signal()),
+                );
             });
             Ok(term)
         }
@@ -762,10 +859,239 @@ mod pty {
             }
         }
 
-        pub fn kill(&self) {
-            unsafe {
-                libc::kill(-(self.pid as i32), libc::SIGHUP);
+        fn signal(&self, signal: i32) {
+            if self.running.load(Ordering::SeqCst) {
+                unsafe {
+                    libc::kill(-(self.pid as i32), signal);
+                }
             }
+        }
+
+        pub fn kill(&self) {
+            self.signal(libc::SIGHUP);
+        }
+
+        pub fn stop(&self) {
+            self.signal(libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(windows)]
+mod pty {
+    use super::*;
+    use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    pub struct Term {
+        pub inner: Mutex<Inner>,
+        writer: Mutex<Option<Box<dyn Write + Send>>>,
+        master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+        pid: Mutex<Option<u32>>,
+        pub notified: AtomicBool,
+        running: AtomicBool,
+    }
+
+    fn command(program: &str, cwd: &str) -> CommandBuilder {
+        let mut cmd = CommandBuilder::new(program);
+        // CommandBuilder starts from the registry, which lacks the tools clight added to PATH.
+        for (k, v) in std::env::vars_os() {
+            cmd.env(k, v);
+        }
+        cmd.env("TERM", "xterm-256color");
+        cmd.cwd(cwd);
+        cmd
+    }
+
+    /// A console starts in the OEM code page, which garbles UTF-8 text like "è".
+    fn use_utf8(slave: &dyn SlavePty, cwd: &str) {
+        let mut cmd = command("cmd.exe", cwd);
+        cmd.args(["/c", "chcp 65001 >nul"]);
+        let Ok(mut child) = slave.spawn_command(cmd) else {
+            return;
+        };
+        for _ in 0..200 {
+            if !matches!(child.try_wait(), Ok(None)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = child.kill();
+    }
+
+    fn with_exe_suffix(program: String) -> String {
+        let exe = format!("{program}.exe");
+        if !program.to_lowercase().ends_with(".exe") && std::path::Path::new(&exe).is_file() {
+            exe
+        } else {
+            program
+        }
+    }
+
+    impl Term {
+        pub fn spawn(
+            app: AppHandle,
+            id: u32,
+            cwd: &str,
+            cols: usize,
+            rows: usize,
+        ) -> Result<Arc<Term>, String> {
+            Self::start(
+                app,
+                id,
+                command("powershell.exe", cwd),
+                cwd,
+                cols,
+                rows,
+                "",
+                OnExit::CloseTab,
+            )
+        }
+
+        pub fn run(
+            app: AppHandle,
+            id: u32,
+            launch: Launch,
+            cols: usize,
+            rows: usize,
+            banner: &str,
+        ) -> Result<Arc<Term>, String> {
+            let program = with_exe_suffix(launch.program);
+            let mut cmd = command(&program, &launch.cwd);
+            cmd.args(&launch.args);
+            for (k, v) in &launch.env {
+                cmd.env(k, v);
+            }
+            Self::start(
+                app,
+                id,
+                cmd,
+                &launch.cwd,
+                cols,
+                rows,
+                banner,
+                OnExit::ReportRun,
+            )
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn start(
+            app: AppHandle,
+            id: u32,
+            cmd: CommandBuilder,
+            cwd: &str,
+            cols: usize,
+            rows: usize,
+            banner: &str,
+            on_exit: OnExit,
+        ) -> Result<Arc<Term>, String> {
+            let text = |e: anyhow::Error| e.to_string();
+            let pair = native_pty_system()
+                .openpty(PtySize {
+                    rows: rows as u16,
+                    cols: cols as u16,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(text)?;
+            let reader = pair.master.try_clone_reader().map_err(text)?;
+            let writer = pair.master.take_writer().map_err(text)?;
+            let term = Arc::new(Term {
+                inner: Mutex::new(Inner {
+                    parser: Parser::new(),
+                    grid: Grid::new(cols, rows),
+                }),
+                writer: Mutex::new(Some(writer)),
+                master: Mutex::new(Some(pair.master)),
+                pid: Mutex::new(None),
+                notified: AtomicBool::new(false),
+                running: AtomicBool::new(true),
+            });
+            term.note(banner);
+
+            // ConPTY asks for the cursor position at startup and waits for the
+            // answer, so the reader has to be running before anything is spawned.
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let (t, a) = (term.clone(), app.clone());
+            std::thread::spawn(move || {
+                pump(&t, &a, id, reader);
+                let _ = done_tx.send(());
+            });
+
+            use_utf8(&*pair.slave, cwd);
+            let spawned = pair.slave.spawn_command(cmd);
+            drop(pair.slave);
+            let mut child: Box<dyn Child + Send + Sync> = match spawned {
+                Ok(child) => child,
+                Err(e) => {
+                    term.close();
+                    return Err(e.to_string());
+                }
+            };
+            *term.pid.lock().unwrap() = child.process_id();
+
+            let t = term.clone();
+            std::thread::spawn(move || {
+                let status = child.wait().ok();
+                t.running.store(false, Ordering::SeqCst);
+                // The output pipe only ends once the pseudo console is closed.
+                t.close();
+                let _ = done_rx.recv_timeout(Duration::from_secs(3));
+                let code = status.map(|s| s.exit_code() as i32);
+                announce_exit(&app, id, on_exit, code, None);
+            });
+            Ok(term)
+        }
+
+        fn close(&self) {
+            let master = self.master.lock().unwrap().take();
+            let writer = self.writer.lock().unwrap().take();
+            drop(writer);
+            drop(master);
+        }
+
+        pub fn write(&self, data: &[u8]) -> Result<(), String> {
+            let mut writer = self.writer.lock().unwrap();
+            let w = writer.as_mut().ok_or("The program has ended")?;
+            w.write_all(data)
+                .and_then(|_| w.flush())
+                .map_err(|e| e.to_string())
+        }
+
+        pub fn resize(&self, cols: usize, rows: usize) {
+            if let Some(m) = self.master.lock().unwrap().as_ref() {
+                let _ = m.resize(PtySize {
+                    rows: rows as u16,
+                    cols: cols as u16,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                });
+            }
+            self.inner.lock().unwrap().grid.resize(cols, rows);
+        }
+
+        pub fn info(&self) -> TermInfo {
+            TermInfo::default()
+        }
+
+        pub fn kill(&self) {
+            self.stop();
+        }
+
+        pub fn stop(&self) {
+            let pid = *self.pid.lock().unwrap();
+            let (true, Some(pid)) = (self.running.load(Ordering::SeqCst), pid) else {
+                return;
+            };
+            let mut taskkill = Command::new("taskkill");
+            crate::runner::clean_env(&mut taskkill);
+            let _ = taskkill
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
     }
 }
@@ -835,6 +1161,23 @@ mod tests {
         feed(&mut g, "x");
         assert_eq!(g.view(0, false).rows.len(), 1);
         assert_eq!(g.view(0, false).rows.len(), 0);
+    }
+
+    #[test]
+    fn ansi_colors_reach_the_html_and_reset() {
+        let mut g = Grid::new(10, 1);
+        feed(&mut g, "\x1b[31mr\x1b[92mg\x1b[38;5;4mb\x1b[0mx");
+        assert_eq!(
+            g.view(0, true).rows[0].1,
+            "<span class=\"c2 \">r</span><span class=\"c3 \">g</span><span class=\"c5 \">b</span>x"
+        );
+    }
+
+    #[test]
+    fn the_cursor_position_query_is_answered() {
+        let mut g = Grid::new(10, 3);
+        feed(&mut g, "ab\r\nc\x1b[6n");
+        assert_eq!(g.take_reply(), b"\x1b[2;2R");
     }
 
     #[test]
