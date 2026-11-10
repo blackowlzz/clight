@@ -1,5 +1,5 @@
 import * as ed from './editor.js'
-import { $, h, invoke, listen, app, state, toast, guard } from './core.js'
+import { $, h, icon, invoke, listen, app, state, toast, guard } from './core.js'
 import * as ai from './ai.js'
 import { endpoint, ready } from './ai.js'
 
@@ -7,11 +7,30 @@ const SYSTEM = 'You are a helpful assistant for C and C++ programmers, inside th
 
 const view = $('v-chat')
 const log = h('div', { class: 'chat-log' })
-const input = h('textarea', { class: 'chat-input', rows: '2', spellcheck: 'false', placeholder: 'Ask about your code…  Enter sends, Shift+Enter adds a line' })
-const sendBtn = h('button', { class: 'primary' }, 'Send')
+const input = h('textarea', { class: 'chat-input', rows: '1', spellcheck: 'false', placeholder: 'Ask about your code…' })
+const sendBtn = h('button', { class: 'chat-send', title: 'Send (Enter)', 'aria-label': 'Send', disabled: true }, icon('send'))
 const note = h('div', { class: 'chat-note' })
-const withFile = h('input', { type: 'checkbox', checked: true })
-view.replaceChildren(log, h('div', { class: 'chat-composer' }, note, input, h('div', { class: 'chat-bar' }, h('label', { class: 'chat-opt' }, withFile, 'Include the open file'), h('span', { class: 'grow' }), sendBtn)))
+let fileOn = true
+const fileChip = h('button', {
+  class: 'chat-chip on',
+  type: 'button',
+  'aria-pressed': 'true',
+  title: 'Send the file you have open along with your question',
+  onclick: () => {
+    fileOn = !fileOn
+    fileChip.classList.toggle('on', fileOn)
+    fileChip.setAttribute('aria-pressed', String(fileOn))
+  },
+}, 'Open file')
+const box = h('div', { class: 'chat-box' }, input, h('div', { class: 'chat-foot' }, fileChip, h('span', { class: 'grow' }), h('span', { class: 'chat-hint' }, 'Enter to send'), sendBtn))
+view.replaceChildren(log, h('div', { class: 'chat-composer' }, box, note))
+
+function fit() {
+  input.style.height = 'auto'
+  input.style.height = Math.min(input.scrollHeight, 140) + 'px'
+  sendBtn.disabled = !busy && !input.value.trim()
+}
+input.addEventListener('input', fit)
 
 let history = []
 let busy = false
@@ -67,9 +86,15 @@ function addMessage(role, text = '') {
   return body
 }
 
+const STARTERS = [
+  ['Explain this file', 'Explain what the open file does, briefly.'],
+  ['Find bugs', 'Look for bugs in the open file and list them.'],
+  ['Suggest improvements', 'Suggest improvements for the open file.'],
+]
+
 function welcome() {
   log.replaceChildren()
-  note.textContent = ai.isBuiltin() && ready() ? 'Small built-in AI: quick, but it can make mistakes. Check what it writes.' : ''
+  note.textContent = ai.isBuiltin() && ready() ? 'Small AI: it can make mistakes, so check what it writes.' : ''
   note.hidden = !note.textContent
   let box
   if (ai.isBuiltin() && !ready()) {
@@ -82,7 +107,8 @@ function welcome() {
   } else if (ready()) {
     box = h('div', { class: 'chat-welcome' },
       h('b', {}, 'Ask about your code'),
-      h('span', { class: 'muted' }, (ai.isBuiltin() ? 'Using the small built-in AI. It is a small model and can make mistakes.' : `Using ${endpoint().model}.`) + ' Tick “Include the open file” to give it your code.'),
+      h('span', { class: 'muted' }, (ai.isBuiltin() ? 'Using the small built-in AI. It is a small model and can make mistakes.' : `Using ${endpoint().model}.`) + ' It sees the file you have open.'),
+      state.active === null ? null : h('div', { class: 'chat-starters' }, ...STARTERS.map(([label, prompt]) => h('button', { class: 'chat-starter', onclick: () => { input.value = prompt; fit(); guard(ask()) } }, label))),
     )
   } else {
     box = h('div', { class: 'chat-welcome' },
@@ -96,9 +122,11 @@ function welcome() {
 
 function setBusy(on) {
   busy = on
-  sendBtn.textContent = on ? 'Stop' : 'Send'
-  sendBtn.classList.toggle('primary', !on)
-  sendBtn.closest('.chat-composer').classList.toggle('busy', on)
+  sendBtn.querySelector('use').setAttribute('href', on ? '#i-stop' : '#i-send')
+  sendBtn.title = on ? 'Stop' : 'Send (Enter)'
+  sendBtn.setAttribute('aria-label', sendBtn.title)
+  box.classList.toggle('busy', on)
+  fit()
 }
 
 const FRESH_MS = 320
@@ -187,10 +215,11 @@ async function ask() {
   }
   if (!history.length) log.replaceChildren()
   input.value = ''
+  fit()
   addMessage('user', text)
   history.push({ role: 'user', content: text })
   const messages = [{ role: 'system', content: SYSTEM }]
-  if (withFile.checked && state.active !== null) {
+  if (fileOn && state.active !== null) {
     const ctx = await invoke('doc_context', { id: state.active, max: 12000 }).catch(() => null)
     if (ctx) messages.push({ role: 'system', content: `The user has "${ctx[0]}" open:\n\`\`\`\n${ctx[1]}\n\`\`\`` })
   }
