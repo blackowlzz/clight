@@ -27,7 +27,7 @@ const trail = $('caret-trail')
 const caretGlow = $('caret-glow')
 const ghostEl = $('ghost')
 let ghostText = ''
-let seenRev = -1, seenTotal = -1, seenDoc = null, seenRow = -1, seenCol = 0
+let seenRev = -1, seenTotal = -1, seenDoc = null, seenRow = -1, seenCol = 0, seenText = ''
 let typedMarks = []
 const TYPED_MS = 260
 
@@ -255,12 +255,13 @@ function typingEffects(v, x, y, row) {
   const same = seenDoc === docId
   const edited = same && v.rev !== seenRev
   const grew = same && v.total === seenTotal + 1
-  const prevRow = seenRow, prevCol = seenCol
+  const prevRow = seenRow, prevCol = seenCol, prevTotal = seenTotal, prevText = seenText
   seenDoc = docId
   seenRev = v.rev
   seenTotal = v.total
   seenRow = row
   seenCol = v.cur[1]
+  seenText = live.get(row)?.l.textContent ?? ''
   if (root.dataset.fxType !== 'on') return
   const size = LH * 7
   caretGlow.style.width = caretGlow.style.height = size + 'px'
@@ -271,7 +272,50 @@ function typingEffects(v, x, y, row) {
   const typed = v.cur[1] - prevCol
   if (!grew && prevRow === row && typed > 0 && typed <= 80) typedMarks.push({ row, from: prevCol, to: v.cur[1], t: performance.now() })
   fadeTyped(row)
+  if (!grew && prevRow === row && v.total === prevTotal) eraseText(prevText, seenText, row)
   if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
+}
+
+function wrapRange(el, from, to, className) {
+  const pieces = []
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const a = Math.max(from, offset) - offset
+    const b = Math.min(to, offset + n.data.length) - offset
+    if (b > a) pieces.push([n, a, b])
+    offset += n.data.length
+  }
+  return pieces.reverse().map(([node, a, b]) => {
+    const span = document.createElement('span')
+    span.className = className
+    const range = document.createRange()
+    range.setStart(node, a)
+    range.setEnd(node, b)
+    range.surroundContents(span)
+    return span
+  })
+}
+
+/** Deleted text fades out where it was, and what follows it glides into the gap. */
+function eraseText(prev, next, row) {
+  if (next.length >= prev.length) return
+  let p = 0
+  while (p < next.length && prev[p] === next[p]) p++
+  let s = 0
+  while (s < next.length - p && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++
+  const gone = prev.slice(p, prev.length - s)
+  if (next.length !== p + s || !gone.trim() || gone.length > 80) return
+  const ghost = document.createElement('div')
+  ghost.className = 'erased'
+  ghost.textContent = gone
+  ghost.style.left = PAD + p * CH + 'px'
+  ghost.style.top = row * LH + 'px'
+  linesEl.parentElement.append(ghost)
+  ghost.animate([{ opacity: 0.8, filter: 'blur(0px)', transform: 'none' }, { opacity: 0, filter: 'blur(3px)', transform: 'translateY(-3px)' }], { duration: 240, easing: 'ease-out' }).onfinish = () => ghost.remove()
+  const el = live.get(row)?.l
+  if (!el || s === 0) return
+  for (const span of wrapRange(el, p, next.length, 'slide')) span.animate([{ transform: `translateX(${gone.length * CH}px)` }, { transform: 'none' }], { duration: 140, easing: 'ease-out' })
 }
 
 /** Text you just wrote fades in with the same soft blur as the text the AI writes. */
