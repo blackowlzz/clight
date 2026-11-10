@@ -1008,7 +1008,9 @@ mod pty {
                 notified: AtomicBool::new(false),
                 running: AtomicBool::new(true),
             });
-            term.note(banner);
+            // ConPTY starts from the cursor it is told about and counts its rows from there,
+            // so anything written first would push its bottom rows one line out of place.
+            let _ = banner;
 
             // ConPTY asks for the cursor position at startup and waits for the
             // answer, so the reader has to be running before anything is spawned.
