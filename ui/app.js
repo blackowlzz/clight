@@ -6,6 +6,7 @@ import * as git from './git.js'
 import * as update from './update.js'
 import * as tools from './tools.js'
 import * as ai from './ai.js'
+import { closeNote } from './notify.js'
 import { TERMINAL_PASS } from './termkeys.js'
 import * as theme from './theme.js'
 import * as settingsPage from './settings.js'
@@ -990,6 +991,7 @@ async function toggleChat(on = state.right !== 'chat') {
   state.right = on ? 'chat' : null
   $('right').hidden = $('right-rz').hidden = !on
   $('rail-chat').classList.toggle('on', on)
+  $('chat-toggle').classList.toggle('on', on)
   store('chatOpen', on)
   if (!on) return ed.focus()
   const c = await loadChat()
@@ -1001,6 +1003,17 @@ app.syncChat = () => {
   $('rail-chat').hidden = !settings.aiChat
   if (!settings.aiChat && state.right) toggleChat(false)
 }
+/** The button and Alt+8: turn the chat on if it is off, then open or close it. */
+function chatButton() {
+  if (!settings.aiChat) {
+    settings.aiChat = true
+    store('aiChat', true)
+    closeNote('ai')
+    app.syncChat()
+  }
+  return toggleChat(state.right !== 'chat')
+}
+$('chat-toggle').addEventListener('click', chatButton)
 $('rail-chat').addEventListener('click', () => toggleChat())
 $('right-x').addEventListener('click', () => toggleChat(false))
 
@@ -1109,7 +1122,7 @@ reg('tw-run', 'Run', 'A-4', () => showBottom('run', false))
 reg('tw-debug', 'Debug', 'A-5', () => showBottom('debug', false))
 reg('tw-problems', 'Problems', 'A-6', () => showBottom('problems', false))
 reg('tw-terminal', 'Terminal', 'A-F12', () => showBottom('terminal', false))
-reg('tw-chat', 'AI Chat', 'A-8', () => toggleChat())
+reg('tw-chat', 'AI Chat', 'A-8', () => chatButton())
 reg('switch-theme', 'Switch Theme…', 'C-`', quickTheme)
 
 function keymap() {

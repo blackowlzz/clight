@@ -527,3 +527,4 @@ kbd { font: inherit; font-size: 11.5px; color: var(--faint); white-space: nowrap
 .chat-note { font-size: 11.5px; color: var(--muted); }
 .chat-status { margin-left: 8px; align-self: center; color: var(--muted); font-size: 12px; }
 .chat-welcome .plain { color: var(--muted); }
+#chat-toggle.on { background: var(--active); color: var(--text); }
