@@ -1,6 +1,6 @@
 [package]
 name = "clight"
-version = "0.1.3"
+version = "0.1.4"
 description = "A C/C++ IDE that runs on very low-end machines"
 edition = "2021"
 

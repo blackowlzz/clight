@@ -52,6 +52,8 @@ pub const NAMESPACE: u8 = b'o';
 pub const MACRO: u8 = b'w';
 pub const MEMBER: u8 = b'v';
 pub const ESCAPE: u8 = b'x';
+pub const VARIABLE: u8 = b'l';
+pub const CONSTANT: u8 = b'z';
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tok {
@@ -236,6 +238,15 @@ pub fn lex(line: &str, state: u32, lang: Lang, raws: &mut Vec<String>, out: &mut
 
 fn is_ident(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80
+}
+
+pub fn vocabulary(lang: Lang) -> Vec<&'static str> {
+    let tables: &[&[&'static str]] = match lang {
+        Lang::C => &[C_KEYWORDS, TYPES],
+        Lang::Cpp => &[CPP_KEYWORDS, TYPES, STD_TYPES],
+        _ => &[],
+    };
+    tables.concat()
 }
 
 fn push(out: &mut Vec<Tok>, start: usize, end: usize, tag: u8) {
@@ -508,7 +519,9 @@ fn lex_c(b: &[u8], state: u32, cpp: bool, raws: &mut Vec<String>, out: &mut Vec<
 
             let text = std::str::from_utf8(word).unwrap_or("");
             let keywords = if cpp { CPP_KEYWORDS } else { C_KEYWORDS };
-            if keywords.binary_search(&text).is_ok() {
+            if matches!(text, "true" | "false" | "nullptr" | "NULL") {
+                push(out, start, i, CONSTANT);
+            } else if keywords.binary_search(&text).is_ok() {
                 push(out, start, i, KEYWORD);
             } else if TYPES.binary_search(&text).is_ok() || text.ends_with("_t") {
                 push(out, start, i, TYPE);
@@ -539,7 +552,7 @@ fn lex_c(b: &[u8], state: u32, cpp: bool, raws: &mut Vec<String>, out: &mut Vec<
                 } else if member {
                     Some(MEMBER)
                 } else {
-                    None
+                    Some(VARIABLE)
                 };
                 if let Some(t) = tag {
                     push(out, start, i, t);
@@ -701,8 +714,8 @@ mod tests {
     fn comment_markers_inside_strings_are_ignored() {
         let (t, st) = tags(r#"s = "/* not // a comment";"#, 0, Lang::C);
         assert_eq!(st, NORMAL);
-        assert_eq!(t.len(), 1);
-        assert_eq!(t[0].1, STRING);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[1].1, STRING);
     }
 
     #[test]
@@ -723,7 +736,10 @@ mod tests {
     #[test]
     fn cpp_digit_separators_are_one_number() {
         let (t, _) = tags("x = 1'000'000;", 0, Lang::Cpp);
-        assert_eq!(t, vec![("1'000'000".into(), NUMBER)]);
+        assert_eq!(
+            t,
+            vec![("x".into(), VARIABLE), ("1'000'000".into(), NUMBER)]
+        );
     }
 
     #[test]
@@ -743,8 +759,24 @@ mod tests {
                 ("std".into(), NAMESPACE),
                 ("vector".into(), USER_TYPE),
                 ("Point".into(), USER_TYPE),
+                ("v".into(), VARIABLE),
+                ("p".into(), VARIABLE),
                 ("x".into(), MEMBER),
                 ("MAX_N".into(), MACRO)
+            ]
+        );
+    }
+
+    #[test]
+    fn constants_have_their_own_token() {
+        let (t, _) = tags("return true ? nullptr : NULL;", 0, Lang::Cpp);
+        assert_eq!(
+            t,
+            vec![
+                ("return".into(), KEYWORD),
+                ("true".into(), CONSTANT),
+                ("nullptr".into(), CONSTANT),
+                ("NULL".into(), CONSTANT),
             ]
         );
     }

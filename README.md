@@ -14,7 +14,7 @@ On Windows the terminal and the debugger aren't there yet.
 
 CMake and a compiler. Everything else is optional and only turns on if it's installed:
 
-- `clangd` for completion, go to definition and rename. It also gives the errors while you type, and without it they come from `gcc` or `clang` instead
+- `clangd` for smart completion, go to definition and rename. It also gives the errors while you type. Without it, completion suggests keywords and names from your open files, and errors come from `gcc` or `clang`
 - `gdb` for debugging
 - `git` for the commit panel
 - `clang-format` for formatting

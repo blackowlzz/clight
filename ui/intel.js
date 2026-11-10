@@ -140,12 +140,12 @@ function acceptComp(i) {
 
 async function requestComp(force) {
   const id = state.active
-  if (id === null || state.lsp !== 'on') return
+  if (id === null) return
   const token = ++comp.token
   comp.typed = ''
   await ed.idle()
   try {
-    const r = await invoke('lsp_complete', { id, force })
+    const r = await invoke(state.lsp === 'on' ? 'lsp_complete' : 'word_complete', { id, force })
     if (token !== comp.token) return
     comp.items = r.items
     comp.incomplete = r.incomplete

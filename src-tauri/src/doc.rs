@@ -472,6 +472,7 @@ impl Doc {
                     | lexer::NAMESPACE
                     | lexer::MACRO
                     | lexer::MEMBER
+                    | lexer::VARIABLE
             )
         };
         if sl.fresh {
@@ -848,6 +849,29 @@ impl Doc {
             start -= 1;
         }
         self.rope.slice(start..self.cur).to_string()
+    }
+
+    /// Whether the character just before the caret is in a comment or a string.
+    pub fn after_comment_or_string(&mut self) -> bool {
+        let (line, col) = self.pos(self.cur);
+        if col == 0 {
+            return false;
+        }
+        self.ensure_states(line);
+        let text = self.line_text(line).into_owned();
+        let byte = text.char_indices().nth(col - 1).map_or(0, |(b, _)| b) as u32;
+        let mut toks = vec![];
+        lexer::lex(
+            &text,
+            self.states[line],
+            self.lang,
+            &mut self.raws,
+            &mut toks,
+        );
+        toks.iter().any(|t| {
+            (t.start..t.end).contains(&byte)
+                && matches!(t.tag, lexer::COMMENT | lexer::STRING | lexer::ESCAPE)
+        })
     }
 
     pub fn before_prefix(&self) -> String {
@@ -2444,6 +2468,19 @@ mod tests {
     }
 
     #[test]
+    fn comments_and_strings_are_detected_at_the_caret() {
+        let mut d = cpp("int a; // note");
+        d.run(Cmd::Goto { line: 0, col: 5 }).unwrap();
+        assert!(!d.after_comment_or_string());
+        d.run(Cmd::Goto { line: 0, col: 12 }).unwrap();
+        assert!(d.after_comment_or_string());
+
+        let mut d = cpp("f(\"abc\");");
+        d.run(Cmd::Goto { line: 0, col: 5 }).unwrap();
+        assert!(d.after_comment_or_string());
+    }
+
+    #[test]
     fn auto_pairs_and_type_over() {
         let mut d = cpp("");
         typed(&mut d, "f(");
@@ -2536,7 +2573,7 @@ mod tests {
         assert_eq!(d.cursor_pos(), (0, 1));
         let v = d.view(0, 10, false);
         assert_eq!(v.cur, [0, 4]);
-        assert_eq!(v.lines[0], "    x");
+        assert_eq!(v.lines[0], "    <l>x</l>");
     }
 
     #[test]
@@ -2550,7 +2587,7 @@ mod tests {
     fn html_is_escaped() {
         let mut d = cpp("a<b>&c");
         let v = d.view(0, 5, false);
-        assert_eq!(v.lines[0], "a&lt;b&gt;&amp;c");
+        assert_eq!(v.lines[0], "<l>a</l>&lt;<l>b</l>&gt;&amp;<l>c</l>");
     }
 
     #[test]
@@ -2621,7 +2658,7 @@ mod tests {
 
     #[test]
     fn long_lines_are_capped() {
-        let mut d = cpp(&"a".repeat(100_000));
+        let mut d = cpp(&"+".repeat(100_000));
         let v = d.view(0, 1, false);
         assert_eq!(v.lines[0].len(), MAX_RENDER);
     }
@@ -2731,7 +2768,7 @@ mod tests {
     fn indent_guides_skip_the_first_column_and_keep_widths() {
         let mut d = cpp("        x");
         let v = d.view(0, 5, false);
-        assert_eq!(v.lines[0], "    <g>    </g>x");
+        assert_eq!(v.lines[0], "    <g>    </g><l>x</l>");
         assert_eq!(v.cur, [0, 0]);
     }
 
@@ -2751,7 +2788,10 @@ mod tests {
         d.set_semantic(vec![(0, 4, 5, lexer::MEMBER), (1, 4, 5, lexer::MEMBER)]);
         d.run(Cmd::Goto { line: 0, col: 0 }).unwrap();
         d.run(Cmd::Insert { s: "x ".into() }).unwrap();
-        assert_eq!(d.view(0, 5, false).lines[0], "x <t>int</t> <v>value</v>;");
+        assert_eq!(
+            d.view(0, 5, false).lines[0],
+            "<l>x</l> <t>int</t> <v>value</v>;"
+        );
         d.run(Cmd::Newline).unwrap();
         assert_eq!(d.view(0, 5, false).lines[2], "<t>int</t> <v>other</v>;");
     }

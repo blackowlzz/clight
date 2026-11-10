@@ -16,6 +16,7 @@ mod syntax;
 mod term;
 mod tools;
 mod update;
+mod words;
 
 use doc::{Cmd, Doc, View};
 use lsp::{parse_workspace_edit, path_from_uri, uri_from_path, FileEdits, Lsp};
@@ -623,6 +624,48 @@ fn lsp_complete(id: u32, force: bool, state: State<'_, AppState>) -> Res<Complet
     Ok(Completions {
         prefix,
         incomplete,
+        items,
+    })
+}
+
+#[tauri::command(async)]
+fn word_complete(id: u32, force: bool, state: State<'_, AppState>) -> Res<Completions> {
+    const MAX_SCANNED: usize = 512 * 1024;
+    let mut docs = state.docs.lock().unwrap();
+    let doc = docs.get_mut(&id).ok_or("Document is closed")?;
+    let prefix = doc.prefix();
+    let lang = doc.lang;
+    let long_enough = prefix.chars().count() >= if force { 1 } else { 2 };
+    if lang.lsp_id().is_none() || !long_enough || doc.after_comment_or_string() {
+        return Ok(Completions {
+            prefix,
+            incomplete: false,
+            items: vec![],
+        });
+    }
+    let mut left = MAX_SCANNED;
+    let mut sources = vec![];
+    let active = docs.get(&id).into_iter();
+    let others = docs.iter().filter(|(k, _)| **k != id).map(|(_, d)| d);
+    for d in active.chain(others) {
+        if d.lang.lsp_id().is_none() || left == 0 {
+            continue;
+        }
+        let n = d.rope.len_chars().min(left);
+        left -= n;
+        sources.push(d.rope.slice(..n).to_string());
+    }
+    let items = words::suggest(&prefix, &lexer::vocabulary(lang), &sources)
+        .into_iter()
+        .map(|w| Completion {
+            label: w.text.clone(),
+            insert: w.text,
+            detail: if w.keyword { "keyword" } else { "" }.to_string(),
+        })
+        .collect();
+    Ok(Completions {
+        prefix,
+        incomplete: false,
         items,
     })
 }
@@ -1279,6 +1322,7 @@ fn main() {
             #[cfg(any(unix, windows))]
             install_cli,
             syntax_check,
+            word_complete,
             tools_status,
             tools_install,
             tool_available,

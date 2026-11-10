@@ -13,8 +13,8 @@ export const TOKENS = [
     ['curline', 'Current line'], ['caret', 'Caret'],
   ]],
   ['Syntax', [
-    ['k', 'Keywords'], ['t', 'Built-in types'], ['y', 'Classes and types'], ['f', 'Functions'], ['v', 'Fields and globals'],
-    ['o', 'Namespaces'], ['r', 'Strings'], ['x', 'Escape sequences'], ['n', 'Numbers'], ['c', 'Comments'], ['d', 'Preprocessor'], ['w', 'Macros'],
+    ['k', 'Keywords'], ['t', 'Built-in types'], ['y', 'Classes and types'], ['f', 'Functions'], ['v', 'Fields and globals'], ['l', 'Variables and parameters'],
+    ['o', 'Namespaces'], ['r', 'Strings'], ['x', 'Escape sequences'], ['n', 'Numbers'], ['z', 'true, false, null'], ['c', 'Comments'], ['d', 'Preprocessor'], ['w', 'Macros'],
   ]],
   ['Signals', [
     ['err', 'Errors'], ['warn', 'Warnings'], ['bp', 'Breakpoints'], ['git-add', 'Git added'], ['git-mod', 'Git modified'], ['run', 'Run button'], ['glow', 'Mouse glow'],
@@ -53,6 +53,14 @@ export const PRESETS = [
   {
     id: 'studio-light', name: 'Studio Light',
     colors: { ...makeTheme('#ffffff', '#f7f8fa', '#dfe1e5', '#d5e1ff', '#ebecf0', '#c9ccd6', '#1e1f22', '#6c707e', '#a0a4b0', '#3574f0', '#a6d2ff', '#aeb3c2', '#f5f8fe', { code: '#080808', x: '#b85c00', k: '#0033b3', t: '#0033b3', y: '#008080', f: '#00627a', v: '#871094', o: '#008080', r: '#067d17', n: '#1750eb', c: '#8c8c8c', d: '#9e880d', w: '#9e880d', err: '#e53e4d', warn: '#c78a00', bp: '#e53e4d', 'git-add': '#55a76a', 'git-mod': '#3574f0' }, {}), glow: '#000000' },
+  },
+  {
+    id: 'vivid-dark', name: 'Vivid Dark',
+    colors: makeTheme('#1e1e1e', '#262626', '#333333', '#3f3f3f', '#191919', '#4a4a4a', '#dadada', '#b3b3b3', '#7a7a7a', '#a882ff', '#3d3560', '#5e5e5e', '#262626', { code: '#b8b8b8', k: '#fa99cd', t: '#ff8a8e', y: '#e9973f', f: '#e0de71', v: '#53dfdd', l: '#7ab8ff', o: '#53dfdd', r: '#44cf6e', n: '#a882ff', z: '#a882ff', c: '#868686', d: '#ff8a8e', w: '#e9973f', x: '#e9973f', err: '#fb464c', warn: '#e0de71', bp: '#fb464c', 'git-add': '#44cf6e', 'git-mod': '#7ab8ff' }, {}),
+  },
+  {
+    id: 'vivid-light', name: 'Vivid Light',
+    colors: { ...makeTheme('#ffffff', '#f6f6f6', '#e8e8e8', '#e3dcfa', '#e3e3e3', '#c8c8c8', '#222222', '#5c5c5c', '#8a8a8a', '#7852ee', '#d9cffb', '#ababab', '#f6f3fe', { code: '#4a4a4a', k: '#c2307a', t: '#c9263b', y: '#a85400', f: '#7f5e00', v: '#00807d', l: '#086ddd', o: '#00807d', r: '#067d39', n: '#7852ee', z: '#7852ee', c: '#767676', d: '#c9263b', w: '#a85400', x: '#a85400', err: '#e93147', warn: '#a85400', bp: '#e93147', 'git-add': '#067d39', 'git-mod': '#086ddd' }, {}), glow: '#000000' },
   },
   {
     id: 'nord', name: 'Nord',
@@ -98,6 +106,8 @@ export const themes = allThemes
 export const currentBase = () => allThemes().find((t) => t.id === look.themeId) ?? PRESETS[0]
 export function colors() {
   const c = { ...blackBase, ...currentBase().colors, ...look.overrides }
+  c.l = look.overrides.l ?? currentBase().colors.l ?? c.code
+  c.z = look.overrides.z ?? currentBase().colors.z ?? c.k
   c.run = look.overrides.run ?? currentBase().colors.run ?? (luminance(c.bg) > 0.5 ? c.text : '#ffffff')
   return c
 }

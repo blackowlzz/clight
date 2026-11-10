@@ -239,6 +239,8 @@ t { color: var(--t); }
 f { color: var(--f); }
 r { color: var(--r); }
 x { color: var(--x); }
+l { color: var(--l); }
+z { color: var(--z); font-weight: var(--kw); }
 n { color: var(--n); }
 c { color: var(--c); font-style: var(--cs); }
 d { color: var(--d); font-weight: var(--kw); }

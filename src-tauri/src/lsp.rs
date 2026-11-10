@@ -393,6 +393,7 @@ fn tag_for(kind: &str, global: bool) -> u8 {
         "namespace" => lexer::NAMESPACE,
         "macro" => lexer::MACRO,
         "variable" if global => lexer::MEMBER,
+        "variable" | "parameter" => lexer::VARIABLE,
         "comment" => lexer::COMMENT,
         _ => 0,
     }
@@ -463,7 +464,7 @@ mod tests {
             vec![
                 (1, 4, 3, lexer::USER_TYPE),
                 (1, 10, 2, lexer::MEMBER),
-                (3, 0, 1, 0)
+                (3, 0, 1, lexer::VARIABLE)
             ]
         );
     }
