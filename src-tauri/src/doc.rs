@@ -757,6 +757,29 @@ impl Doc {
         self.pos(self.cur)
     }
 
+    /// The caret's line and column with the text before and after it, when a suggestion makes sense.
+    pub fn line_context(&self) -> Option<(usize, usize, String, String)> {
+        if self.has_sel() || self.readonly || self.lang.lsp_id().is_none() {
+            return None;
+        }
+        let (line, col) = self.cursor_pos();
+        let text = self.line_text(line);
+        let split = text.char_indices().nth(col).map_or(text.len(), |(b, _)| b);
+        Some((
+            line,
+            col,
+            text[..split].to_string(),
+            text[split..].to_string(),
+        ))
+    }
+
+    pub fn lines_for_suggest(&self) -> impl Iterator<Item = (usize, Cow<'_, str>)> {
+        self.rope
+            .lines()
+            .enumerate()
+            .map(|(i, l)| (i, Cow::from(l)))
+    }
+
     fn line_len(&self, line: usize) -> usize {
         let s = self.rope.line(line);
         let n = s.len_chars();

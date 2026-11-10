@@ -714,6 +714,7 @@ function setStatusEmpty() {
 
 ed.configure({
   onChange(id, v) {
+    intel.viewChanged(v)
     const tab = state.tabs.find((t) => t.id === id)
     if (!tab) return
     if (tab.dirty !== v.dirty) {
@@ -1097,6 +1098,7 @@ reg('install-cli', 'Install clight and cl Commands', null, async () => {
 })
 
 $('debug').addEventListener('click', () => runAction('debug'))
+$('rail-gear').addEventListener('click', () => runAction('settings'))
 
 function cycleTab(d) {
   if (state.tabs.length < 2) return
@@ -1176,6 +1178,7 @@ app.fitBar = fitBar
 ed.hooks({
   beforeKey: intel.beforeKey,
   afterType: intel.afterType,
+  typed: intel.typed,
   ctrlClick: () => app.gotoDefinition(),
   pointer: intel.hidePopups,
   scrolled: () => {

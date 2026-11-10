@@ -74,6 +74,31 @@ fn walk(root: &Path, visit: &mut dyn FnMut(&Path, &fs::Metadata) -> bool) {
     }
 }
 
+/// Texts of the project's C and C++ files, capped so the memory stays small.
+pub fn source_texts(root: &str) -> Vec<(PathBuf, String)> {
+    const MAX_FILES: usize = 400;
+    const MAX_BYTES: usize = 3 << 20;
+    let mut out = vec![];
+    let mut total = 0usize;
+    walk(Path::new(root), &mut |p, meta| {
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx")
+            || meta.len() > 256 << 10
+        {
+            return true;
+        }
+        if out.len() >= MAX_FILES || total + meta.len() as usize > MAX_BYTES {
+            return false;
+        }
+        if let Ok(text) = fs::read_to_string(p) {
+            total += text.len();
+            out.push((p.to_path_buf(), text));
+        }
+        true
+    });
+    out
+}
+
 pub fn list_files(root: &str) -> Vec<String> {
     let mut out = vec![];
     let base = Path::new(root);

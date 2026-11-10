@@ -49,6 +49,8 @@ Mostly the same as CLion. Ctrl+Shift+A finds any command if you forget one.
 | F7, F8, F9 | Step in, step over, resume |
 | Alt+F12 | Terminal |
 
+Gray suggestions finish the line you are typing from code you already wrote, and Tab accepts them. They can be turned off in Settings.
+
 Drag a selection to move it, or hold Ctrl to copy it. Ctrl+wheel changes the font size.
 
 From a terminal you can open the current folder with `clight .` or `cl .`. On the AppImage, turn that on from Help > Install clight and cl Commands. On Windows the installer sets them up, so just open a new terminal afterwards. Inside a Visual Studio Developer Prompt `cl` is the MSVC compiler, so use `clight .` there.

@@ -65,6 +65,7 @@ export const settings = {
   autosave: load('autosave', true),
   updates: load('updates', true),
   termBar: load('termBar', false),
+  ghost: load('ghost', true),
   formatStyle: load('formatStyle', 'clean'),
 }
 

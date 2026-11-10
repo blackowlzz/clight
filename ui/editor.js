@@ -25,6 +25,8 @@ let sizerW = ''
 let lastCaret = null
 const trail = $('caret-trail')
 const caretGlow = $('caret-glow')
+const ghostEl = $('ghost')
+let ghostText = ''
 let seenRev = -1, seenTotal = -1, seenDoc = null
 
 const live = new Map()
@@ -211,6 +213,7 @@ function paint(v, revealed) {
   const tr = `translate(${x}px,${y}px)`
   smear(x, y)
   typingEffects(v, x, y, curR)
+  if (ghostText) ghostEl.style.transform = tr
   caret.style.transform = tr
   ime.style.transform = tr
   curline.style.transform = `translateY(${y}px)`
@@ -261,6 +264,13 @@ function typingEffects(v, x, y, row) {
   caretGlow.getAnimations().forEach((a) => a.cancel())
   caretGlow.animate([{ opacity: 1 }, { opacity: 0.5 }], { duration: 420, easing: 'ease-out' })
   if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
+}
+
+export function setGhost(text) {
+  ghostText = text
+  ghostEl.textContent = text
+  ghostEl.hidden = !text
+  if (text && lastCaret) ghostEl.style.transform = `translate(${lastCaret.x}px,${lastCaret.y}px)`
 }
 
 export function flashSaved() {
@@ -321,6 +331,7 @@ export function caretBox() {
 const hook = {
   beforeKey: () => false,
   afterType: () => {},
+  typed: () => {},
   ctrlClick: () => {},
   pointer: () => {},
   scrolled: () => {},
@@ -560,6 +571,7 @@ function flushInput() {
   if (!s) return
   send({ t: 'type', s })
   hook.afterType(s)
+  hook.typed(s)
 }
 
 ime.addEventListener('copy', (e) => {

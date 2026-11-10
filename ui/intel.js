@@ -91,7 +91,49 @@ let compTimer = 0
 let sigTimer = 0
 let hoverSticky = false
 
+let ghost = null
+let viewKey = ''
+let ghostTimer = 0
+let ghostToken = 0
+
+function clearGhost() {
+  ghostToken++
+  clearTimeout(ghostTimer)
+  if (!ghost) return
+  ghost = null
+  ed.setGhost('')
+}
+app.clearGhost = clearGhost
+
+export function viewChanged(v) {
+  viewKey = `${v.rev}:${v.line}:${v.col}`
+  if (ghost && ghost.key !== viewKey) clearGhost()
+}
+
+async function requestGhost() {
+  if (!settings.ghost || state.active === null || comp.open) return
+  const token = ++ghostToken
+  await ed.idle()
+  const r = await invoke('line_suggest', { id: state.active, root: state.root ?? '' }).catch(() => null)
+  if (token !== ghostToken || !r || comp.open || r.key !== viewKey) return
+  ghost = r
+  ed.setGhost(r.text)
+}
+
+export function typed() {
+  clearTimeout(ghostTimer)
+  ghostTimer = setTimeout(requestGhost, 60)
+}
+
+function acceptGhost(all) {
+  const text = all ? ghost.text : (ghost.text.match(/^\s*\S+/)?.[0] ?? ghost.text)
+  clearGhost()
+  ed.send({ t: 'insert', s: text })
+  typed()
+}
+
 export function hidePopups() {
+  clearGhost()
   comp.open = false
   comp.token++
   clearTimeout(compTimer)
@@ -118,6 +160,7 @@ function renderComp() {
     return
   }
   comp.open = true
+  clearGhost()
   comp.sel = Math.min(comp.sel, comp.shown.length - 1)
   compEl.replaceChildren(...comp.shown.map((it, i) => h('div', { class: 'ci' + (i === comp.sel ? ' on' : ''), onpointerdown: (e) => (e.preventDefault(), acceptComp(i)) }, h('span', { class: 'lab' }, it.label), h('span', { class: 'det' }, it.detail))))
   compEl.hidden = false
@@ -191,6 +234,11 @@ export function beforeKey(e, name) {
     if (name === 'ArrowDown') return moveComp(1), true
     if (name === 'ArrowUp') return moveComp(-1), true
     if (name === 'Enter' || name === 'Tab') return acceptComp(comp.sel), true
+  }
+  if (ghost) {
+    if (name === 'Tab') return acceptGhost(true), true
+    if (name === 'C-ArrowRight') return acceptGhost(false), true
+    if (name === 'Escape') return clearGhost(), true
   }
   if (name === 'C- ') {
     requestComp(true)

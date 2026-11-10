@@ -287,6 +287,7 @@ function toolsPage() {
     }),
     opt('index', 'Needed for usages and rename across files. Auto: 3 GB free', 'Project index', triple, () => state.lsp === 'on' && intel.restartIntel()),
     opt('formatStyle', 'Used unless the project has its own .clang-format', 'Code style', [['clean', 'Clean'], ['allman', 'Allman'], ['google', 'Google'], ['llvm', 'LLVM']]),
+    opt('ghost', 'Gray text after the caret that finishes the line from code you already wrote. Tab accepts it', 'Line suggestions', onOff, (v) => !v && app.clearGhost?.()),
     opt('autosave', 'When the window loses focus', 'Save automatically', onOff),
     opt('updates', 'At startup, from GitHub', 'Check for updates', onOff),
     opt('termBar', 'A separate command field, or typing straight into the shell', 'Terminal input', [[true, 'Command bar'], [false, 'Classic']], () => app.term?.syncBar()),

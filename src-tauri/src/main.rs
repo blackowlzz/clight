@@ -11,6 +11,7 @@ mod lexer;
 mod lsp;
 mod project;
 mod runner;
+mod suggest;
 mod syntax;
 mod term;
 mod tools;
@@ -686,6 +687,44 @@ fn lsp_complete(id: u32, force: bool, state: State<'_, AppState>) -> Res<Complet
         incomplete,
         items,
     })
+}
+
+#[derive(Serialize)]
+struct LineGhost {
+    text: String,
+    key: String,
+}
+
+#[tauri::command(async)]
+fn line_suggest(id: u32, root: String, state: State<'_, AppState>) -> Option<LineGhost> {
+    let docs = state.docs.lock().unwrap();
+    let doc = docs.get(&id)?;
+    let (line, col, prefix, suffix) = doc.line_context()?;
+    if !suggest::suffix_is_closers(&suffix) {
+        return None;
+    }
+    let key = format!("{}:{}:{}", doc.rev, line, col + 1);
+    let open: Vec<&Path> = docs.values().map(|d| d.path.as_path()).collect();
+    let project = suggest::project_files(&root);
+    let here = doc
+        .lines_for_suggest()
+        .filter(|(i, _)| *i != line)
+        .map(|(_, t)| (3, t));
+    let others = docs
+        .iter()
+        .filter(|(k, _)| **k != id)
+        .flat_map(|(_, d)| d.lines_for_suggest().map(|(_, t)| (2, t)));
+    let files = project
+        .iter()
+        .filter(|(p, _)| !open.contains(&p.as_path()))
+        .flat_map(|(_, text)| text.lines().map(|l| (1, std::borrow::Cow::Borrowed(l))));
+    let text = suggest::complete(
+        &prefix,
+        &suffix,
+        here.chain(others).chain(files),
+        doc.lang == lexer::Lang::Cpp,
+    )?;
+    Some(LineGhost { text, key })
 }
 
 #[tauri::command(async)]
@@ -1369,6 +1408,7 @@ fn main() {
             install_cli,
             syntax_check,
             word_complete,
+            line_suggest,
             tools_status,
             tools_install,
             tool_available,
