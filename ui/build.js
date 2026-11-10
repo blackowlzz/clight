@@ -5,6 +5,15 @@ const MAX_OUT = 3000
 const DIAG_RE = /^(.+?):(\d+):(?:(\d+):)?\s+(fatal error|error|warning|note):\s*(.*)/
 const MSVC_RE = /^\s*(?:\d+>)?(.+?)\((\d+)(?:,(\d+))?(?:,\d+)*\)\s*:\s+(fatal error|error|warning|note)(?:\s+\w+)?:\s*(.*?)(?:\s+\[[^\]]*\])?$/
 const FAILURE_RE = /(?:^|\s)(?:fatal )?error(?: [A-Z]+\d+)?:|undefined reference to|^CMake Error|\*\*\* .*Error \d+/
+const WINDOWS_CRASHES = {
+  [-1073741819]: 'invalid memory access',
+  [-1073741571]: 'stack overflow',
+  [-1073741676]: 'division by zero',
+  [-1073741515]: 'a required DLL was not found',
+  [-1073741511]: 'a DLL does not match this program',
+  [-1073740940]: 'heap corruption',
+  [-1073740791]: 'stack buffer overrun',
+}
 const ENGLISH_ENV = [['LC_ALL', 'C'], ['LANGUAGE', 'en'], ['VSLANG', '1033']]
 
 class Output {
@@ -279,7 +288,8 @@ async function buildSingle() {
   const exe = join(dir, t.name.replace(/\.[^.]+$/, ''))
   const cc = t.path.endsWith('.c') ? 'gcc' : 'g++'
   const opt = state.profile === 'Release' ? '-O2' : '-g'
-  const code = await runTask(buildOut, `compile ${t.name}`, cc, [opt, '-Wall', '-Wextra', t.path, '-o', exe], state.root)
+  const helper = await invoke('unbuffered_helper', { dir })
+  const code = await runTask(buildOut, `compile ${t.name}`, cc, [opt, '-Wall', '-Wextra', t.path, helper, '-o', exe], state.root)
   buildOut.append(code === 0 ? 'Build finished\n' : `Build failed (${code})\n`, code === 0 ? 'ok' : 'er')
   return code === 0 ? exe : null
 }
@@ -330,7 +340,9 @@ async function doRun() {
   runOut.clear()
   try {
     const code = await runTask(runOut, b.exe, b.exe, parsedArgs(), b.cwd, { background: false, interactive: true, env: parsedEnv() })
-    runOut.append(code === null ? '\nProcess finished (killed)\n' : `\nProcess finished with exit code ${code}\n`, 'hd')
+    const crash = WINDOWS_CRASHES[code]
+    if (crash) runOut.append(`\nProgram crashed: ${crash} (0x${(code >>> 0).toString(16).toUpperCase()})\n`, 'er')
+    else runOut.append(code === null ? '\nProcess finished (killed)\n' : `\nProcess finished with exit code ${code}\n`, 'hd')
     if (!$('work').hidden) ed.focus()
   } catch {}
 }

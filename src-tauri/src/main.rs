@@ -463,6 +463,11 @@ fn cmake_targets(build: String) -> Vec<project::Target> {
 }
 
 #[tauri::command]
+fn unbuffered_helper(dir: String) -> Res<String> {
+    project::write_unbuffered_helper(Path::new(&dir))
+}
+
+#[tauri::command]
 fn make_dirs(path: String) -> Res<()> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
@@ -1383,6 +1388,7 @@ fn main() {
             cmake_prepare,
             cmake_targets,
             make_dirs,
+            unbuffered_helper,
             lsp_start,
             lsp_stop,
             lsp_sync,

@@ -180,6 +180,16 @@ pub fn create_project(parent: &str, name: &str, cpp: bool) -> Result<String, Str
     Ok(dir.to_string_lossy().into_owned())
 }
 
+const UNBUFFERED_C: &str = "#include <stdio.h>\n\
+__attribute__((constructor)) static void clight_unbuffered(void) { setvbuf(stdout, NULL, _IONBF, 0); }\n";
+
+/// A pipe makes stdout fully buffered, so a crash would lose everything printed so far.
+pub fn write_unbuffered_helper(dir: &Path) -> Result<String, String> {
+    let path = dir.join("clight_unbuffered.c");
+    fs::write(&path, UNBUFFERED_C).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[derive(Serialize)]
 pub struct Target {
     pub name: String,
