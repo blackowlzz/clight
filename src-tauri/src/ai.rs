@@ -156,7 +156,7 @@ async fn run(
 ) -> Result<(), String> {
     let builtin = ep.url.trim() == "builtin";
     let root = if builtin {
-        format!("{}/v1", crate::llama::ensure(app, id).await?)
+        format!("{}/v1", crate::llama::ensure(app, id, &ep.model).await?)
     } else {
         base(&ep.url)?
     };

@@ -285,27 +285,37 @@ function aiPage(rerender) {
   }))
   if (ai.isBuiltin()) {
     const box = h('span', { class: 'ai-control' })
+    const k = ai.size()
+    const m = ai.MODELS[k]
     const paint = () => {
       if (!box.isConnected && box.dataset.ready) return window.removeEventListener('ai-changed', paint)
       box.dataset.ready = '1'
       box.replaceChildren(
         ai.installing()
           ? h('span', { class: 'muted' }, 'Installing…')
-          : ai.ready()
-            ? h('span', {}, h('span', { class: 'muted' }, 'Installed  '), h('button', { onclick: () => guard(ai.removeBuiltin()) }, 'Remove'))
-            : h('button', { class: 'primary', onclick: () => guard(ai.installBuiltin()) }, `Install (${ai.SMALL_AI_SIZE})`),
+          : ai.isInstalled(k)
+            ? h('span', {}, h('span', { class: 'muted' }, 'Installed  '), h('button', { onclick: () => guard(ai.removeBuiltin(k)) }, 'Remove'))
+            : h('button', { class: 'primary', onclick: () => guard(ai.installBuiltin(k)) }, `Install (${m.download})`),
       )
     }
     window.addEventListener('ai-changed', paint)
     paint()
     ai.refresh().then(paint)
+    const sizes = seg(Object.entries(ai.MODELS).map(([id, x]) => [id, `${x.label} · ${x.params}`]), k, (v) => {
+      save('aiSize', v)
+      ai.refresh().then(() => {
+        window.dispatchEvent(new Event('ai-changed'))
+        rerender?.()
+      })
+    })
     return h(
       'div',
       {},
       chatRow,
       provider,
-      row('Small built-in AI', 'Qwen2.5-Coder 0.5B. It installs and starts by itself, and stops when you are not using it. It is small and quick on weak laptops, but it can make mistakes.', box),
-      h('p', { class: 'muted', style: 'padding:6px 0' }, 'It runs on your computer. Your code is not sent anywhere.'),
+      row('Size', 'You can install both and switch. Only one runs at a time', sizes),
+      row(`${m.label} AI · Qwen2.5-Coder ${m.params}`, `${m.tag}. Download ${m.download}. Memory ${m.ram} while it runs. Processor: ${m.cpu}. Answers: ${m.answers}. These are estimates. It starts by itself and stops after 5 idle minutes.`, box),
+      h('p', { class: 'muted', style: 'padding:6px 0' }, `It runs on your computer and your code is not sent anywhere. ${ai.advice()}`.trim()),
     )
   }
   const field = (key, placeholder, type = 'text', extra = {}) =>

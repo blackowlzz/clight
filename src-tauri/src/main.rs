@@ -235,20 +235,18 @@ fn tools_status(app: AppHandle) -> Vec<tools::Status> {
 }
 
 #[tauri::command]
-fn ai_builtin_installed(app: AppHandle) -> bool {
-    llama::installed(&app)
+fn ai_builtin_installed(size: String, app: AppHandle) -> bool {
+    llama::installed(&app, &size)
 }
 
 #[tauri::command(async)]
-async fn ai_warm(app: AppHandle) -> Res<()> {
-    llama::ensure(&app, 0).await.map(|_| ())
+async fn ai_warm(size: String, app: AppHandle) -> Res<()> {
+    llama::ensure(&app, 0, &size).await.map(|_| ())
 }
 
 #[tauri::command(async)]
-fn ai_remove(app: AppHandle) {
-    llama::stop();
-    tools::remove(&app, "ai-engine");
-    tools::remove(&app, "ai-model");
+fn ai_remove(size: String, app: AppHandle) {
+    llama::remove(&app, &size);
 }
 
 #[tauri::command]

@@ -92,22 +92,26 @@ const STARTERS = [
   ['Suggest improvements', 'Suggest improvements for the open file.'],
 ]
 
+function updateNote() {
+  note.textContent = ai.isBuiltin() && ready() ? `${ai.MODELS[ai.size()].label} AI (${ai.MODELS[ai.size()].params}): it can make mistakes, so check what it writes.` : ''
+  note.hidden = !note.textContent
+}
+
 function welcome() {
   log.replaceChildren()
-  note.textContent = ai.isBuiltin() && ready() ? 'Small AI: it can make mistakes, so check what it writes.' : ''
-  note.hidden = !note.textContent
+  updateNote()
   let box
   if (ai.isBuiltin() && !ready()) {
     box = h('div', { class: 'chat-welcome' },
-      h('b', {}, 'A small AI for your code'),
-      h('span', { class: 'muted' }, 'It runs on your computer and starts by itself, with nothing to set up. It is a small model (Qwen2.5-Coder 0.5B), so it can make mistakes.'),
-      h('button', { class: 'primary', disabled: ai.installing(), onclick: () => guard(ai.installBuiltin()) }, ai.installing() ? 'Installing…' : `Install the small AI (${ai.SMALL_AI_SIZE})`),
+      h('b', {}, 'An AI for your code, on your computer'),
+      h('span', { class: 'muted' }, 'Pick one. It installs and starts by itself, with nothing to set up.'),
+      ai.installing() ? h('span', { class: 'muted' }, 'Installing… see the notification in the corner.') : ai.modelCards((k) => guard(ai.installBuiltin(k))),
       h('button', { class: 'plain', onclick: () => app.openSettings?.('ai') }, 'Use my own server instead'),
     )
   } else if (ready()) {
     box = h('div', { class: 'chat-welcome' },
       h('b', {}, 'Ask about your code'),
-      h('span', { class: 'muted' }, (ai.isBuiltin() ? 'Using the small built-in AI. It is a small model and can make mistakes.' : `Using ${endpoint().model}.`) + ' It sees the file you have open.'),
+      h('span', { class: 'muted' }, (ai.isBuiltin() ? `Using the ${ai.MODELS[ai.size()].label.toLowerCase()} built-in AI (${ai.MODELS[ai.size()].params}). It is a small model and can make mistakes.` : `Using ${endpoint().model}.`) + ' It sees the file you have open.'),
       state.active === null ? null : h('div', { class: 'chat-starters' }, ...STARTERS.map(([label, prompt]) => h('button', { class: 'chat-starter', onclick: () => { input.value = prompt; fit(); guard(ask()) } }, label))),
     )
   } else {
@@ -197,6 +201,8 @@ listen('ai-status', (e) => {
 })
 
 window.addEventListener('ai-changed', () => {
+  updateNote()
+  status.textContent = ready() ? (ai.isBuiltin() ? `${ai.MODELS[ai.size()].label.toLowerCase()} AI` : endpoint().model) : 'not connected'
   if (!history.length && !current) welcome()
 })
 
@@ -211,7 +217,7 @@ async function ask() {
   if (!text) return
   if (!ready()) {
     welcome()
-    return toast(ai.isBuiltin() ? 'Install the small AI first' : 'Connect a model first, in Settings > AI')
+    return toast(ai.isBuiltin() ? 'Install the AI first' : 'Connect a model first, in Settings > AI')
   }
   if (!history.length) log.replaceChildren()
   input.value = ''
@@ -265,8 +271,8 @@ function newChat() {
 
 export async function shown() {
   await ai.refresh()
-  status.textContent = ready() ? (ai.isBuiltin() ? 'small AI' : endpoint().model) : 'not connected'
+  status.textContent = ready() ? (ai.isBuiltin() ? `${ai.MODELS[ai.size()].label.toLowerCase()} AI` : endpoint().model) : 'not connected'
   if (!history.length && !current) welcome()
   input.focus({ preventScroll: true })
-  if (ai.isBuiltin() && ready()) invoke('ai_warm').catch(() => {})
+  if (ai.isBuiltin() && ready()) invoke('ai_warm', { size: ai.size() }).catch(() => {})
 }

@@ -40,7 +40,7 @@ struct Tool {
     recommended: bool,
 }
 
-static TOOLS: [Tool; 9] = [
+static TOOLS: [Tool; 10] = [
     Tool {
         id: "clangd",
         title: "clangd",
@@ -160,6 +160,20 @@ static TOOLS: [Tool; 9] = [
         size: 397_808_288,
         url: "https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-0.5B-Instruct-Q4_K_M.gguf",
         sha256: "0128e77564e43d40682f82d7ebe8a9abdf0c24c8f55fa85629f8cc156b1b6560",
+        bin: "",
+        exe: "model.gguf",
+        kind: Kind::File,
+        group: "ai",
+        os: Os::All,
+        recommended: false,
+    },
+    Tool {
+        id: "ai-model-large",
+        title: "Better AI model",
+        detail: "Qwen2.5-Coder 1.5B, smarter and heavier",
+        size: 986_048_800,
+        url: "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+        sha256: "f530705d447660a4336c329981af164b471b60b974b1d808d57e8ec9fe23b239",
         bin: "",
         exe: "model.gguf",
         kind: Kind::File,

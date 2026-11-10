@@ -68,6 +68,7 @@ export const settings = {
   ghost: load('ghost', true),
   aiChat: load('aiChat', false),
   aiProvider: load('aiProvider', 'builtin'),
+  aiSize: load('aiSize', 'small'),
   aiUrl: load('aiUrl', 'http://127.0.0.1:11434/v1'),
   aiModel: load('aiModel', ''),
   aiKey: load('aiKey', ''),

@@ -16,6 +16,7 @@ struct Running {
     child: Child,
     port: u16,
     used: Instant,
+    model: &'static str,
 }
 
 static ENGINE: Mutex<Option<Running>> = Mutex::new(None);
@@ -28,13 +29,39 @@ struct Status {
     text: String,
 }
 
-pub fn installed(app: &AppHandle) -> bool {
-    tools::tool_path(app, "ai-engine").is_some() && tools::tool_path(app, "ai-model").is_some()
+/// The tool id of a model size: "large" is the bigger one, anything else the small one.
+pub fn model_id(size: &str) -> &'static str {
+    if size == "large" {
+        "ai-model-large"
+    } else {
+        "ai-model"
+    }
 }
 
-fn alive() -> Option<u16> {
+pub fn installed(app: &AppHandle, size: &str) -> bool {
+    tools::tool_path(app, "ai-engine").is_some() && tools::tool_path(app, model_id(size)).is_some()
+}
+
+/// Takes a model out, and the engine too when no model is left.
+pub fn remove(app: &AppHandle, size: &str) {
+    stop();
+    tools::remove(app, model_id(size));
+    if tools::tool_path(app, "ai-model").is_none()
+        && tools::tool_path(app, "ai-model-large").is_none()
+    {
+        tools::remove(app, "ai-engine");
+    }
+}
+
+fn alive(model: &str) -> Option<u16> {
     let mut guard = ENGINE.lock().unwrap();
     let running = guard.as_mut()?;
+    if running.model != model {
+        let mut old = guard.take()?;
+        let _ = old.child.kill();
+        let _ = old.child.wait();
+        return None;
+    }
     match running.child.try_wait() {
         Ok(None) => {
             running.used = Instant::now();
@@ -90,18 +117,19 @@ fn base(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-fn start(app: &AppHandle, id: u32) -> Result<String, String> {
+fn start(app: &AppHandle, id: u32, size: &str) -> Result<String, String> {
     let _only_one = STARTING.lock().unwrap();
-    if let Some(port) = alive() {
+    let model_tool = model_id(size);
+    if let Some(port) = alive(model_tool) {
         return Ok(base(port));
     }
-    let exe = tools::tool_path(app, "ai-engine").ok_or("The small AI isn't installed")?;
-    let model = tools::tool_path(app, "ai-model").ok_or("The small AI isn't installed")?;
+    let exe = tools::tool_path(app, "ai-engine").ok_or("The AI isn't installed")?;
+    let model = tools::tool_path(app, model_tool).ok_or("That AI model isn't installed")?;
     let _ = app.emit(
         "ai-status",
         Status {
             id,
-            text: "Starting the small AI…".into(),
+            text: "Starting the AI…".into(),
         },
     );
     let port = TcpListener::bind(("127.0.0.1", 0))
@@ -159,6 +187,7 @@ fn start(app: &AppHandle, id: u32) -> Result<String, String> {
         child,
         port,
         used: Instant::now(),
+        model: model_tool,
     });
     WATCHER.call_once(|| {
         std::thread::spawn(|| loop {
@@ -177,9 +206,10 @@ fn start(app: &AppHandle, id: u32) -> Result<String, String> {
 }
 
 /// Address of the built-in engine, started if it isn't running.
-pub async fn ensure(app: &AppHandle, id: u32) -> Result<String, String> {
+pub async fn ensure(app: &AppHandle, id: u32, size: &str) -> Result<String, String> {
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || start(&app, id))
+    let size = size.to_string();
+    tauri::async_runtime::spawn_blocking(move || start(&app, id, &size))
         .await
         .map_err(|e| e.to_string())?
 }

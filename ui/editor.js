@@ -266,11 +266,12 @@ function typingEffects(v, x, y, row) {
   if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
 }
 
-export function setGhost(text) {
+/** `ahead` is how many characters the caret is about to move, until the next repaint catches up. */
+export function setGhost(text, ahead = 0) {
   ghostText = text
   ghostEl.textContent = text
   ghostEl.hidden = !text
-  if (text && lastCaret) ghostEl.style.transform = `translate(${lastCaret.x}px,${lastCaret.y}px)`
+  if (text && lastCaret) ghostEl.style.transform = `translate(${lastCaret.x + ahead * CH}px,${lastCaret.y}px)`
 }
 
 export function flashSaved() {

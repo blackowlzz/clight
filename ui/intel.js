@@ -107,7 +107,15 @@ app.clearGhost = clearGhost
 
 export function viewChanged(v) {
   viewKey = `${v.rev}:${v.line}:${v.col}`
-  if (ghost && ghost.key !== viewKey) clearGhost()
+  if (!ghost || ghost.key === viewKey) return
+  // The caret moved along the suggestion because the typed letters matched it: keep it.
+  if (ghost.base !== undefined && v.line === ghost.line && v.col >= ghost.base && v.col <= ghost.col && v.rev >= ghost.rev) {
+    ghost.rev = v.rev
+    ghost.base = v.col
+    if (v.col === ghost.col) ghost.key = viewKey
+    return
+  }
+  clearGhost()
 }
 
 async function requestGhost() {
@@ -116,12 +124,25 @@ async function requestGhost() {
   await ed.idle()
   const r = await invoke('line_suggest', { id: state.active, root: state.root ?? '' }).catch(() => null)
   if (token !== ghostToken || !r || comp.open || r.key !== viewKey) return
-  ghost = r
+  const [rev, line, col] = r.key.split(':').map(Number)
+  ghost = { ...r, rev, line, col, base: undefined }
   ed.setGhost(r.text)
 }
 
-export function typed() {
+// Typing these can add a closing character of its own, which would change the rest of the line.
+const PAIRS = /[()[\]{}"'<>]/
+
+/** Typed text that matches the start of the suggestion eats into it, so it stays on screen. */
+export function typed(s = '') {
   clearTimeout(ghostTimer)
+  if (ghost && s && !PAIRS.test(s) && ghost.text.length > s.length && ghost.text.startsWith(s)) {
+    const n = [...s].length
+    ghost.text = ghost.text.slice(s.length)
+    ghost.base ??= ghost.col
+    ghost.col += n
+    ed.setGhost(ghost.text, ghost.col - ghost.base)
+    return
+  }
   ghostTimer = setTimeout(requestGhost, 60)
 }
 
