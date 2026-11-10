@@ -24,6 +24,8 @@ let sizerH = ''
 let sizerW = ''
 let lastCaret = null
 const trail = $('caret-trail')
+const caretGlow = $('caret-glow')
+let seenRev = -1, seenTotal = -1, seenDoc = null
 
 const live = new Map()
 const spare = []
@@ -208,6 +210,7 @@ function paint(v, revealed) {
   const y = curR * LH
   const tr = `translate(${x}px,${y}px)`
   smear(x, y)
+  typingEffects(v, x, y, curR)
   caret.style.transform = tr
   ime.style.transform = tr
   curline.style.transform = `translateY(${y}px)`
@@ -241,6 +244,31 @@ function paint(v, revealed) {
 
   if (v.clip !== null && v.clip !== undefined) clip = v.clip
   onView(docId, v)
+}
+
+function typingEffects(v, x, y, row) {
+  const same = seenDoc === docId
+  const edited = same && v.rev !== seenRev
+  const grew = same && v.total === seenTotal + 1
+  seenDoc = docId
+  seenRev = v.rev
+  seenTotal = v.total
+  if (root.dataset.fxType !== 'on') return
+  const size = LH * 7
+  caretGlow.style.width = caretGlow.style.height = size + 'px'
+  caretGlow.style.transform = `translate(${x - size / 2 + 1}px,${y + LH / 2 - size / 2}px)`
+  if (!edited) return
+  caretGlow.getAnimations().forEach((a) => a.cancel())
+  caretGlow.animate([{ opacity: 1 }, { opacity: 0.5 }], { duration: 420, easing: 'ease-out' })
+  if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
+}
+
+export function flashSaved() {
+  if (root.dataset.fxType !== 'on') return
+  scroll.animate(
+    [{ boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent)' }, { boxShadow: 'inset 0 0 0 1px transparent' }],
+    { duration: 520, easing: 'ease-out' },
+  )
 }
 
 function smear(x, y) {

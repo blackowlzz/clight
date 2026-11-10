@@ -1,11 +1,11 @@
 import * as ed from './editor.js'
-import { $, h, invoke, listen, app, state, settings, reg, toast, guard, promptBox, palette, showMenu, basename, SEP } from './core.js'
+import { $, h, invoke, listen, app, state, settings, reg, toast, guard, promptBox, palette, showMenu, basename, SEP, runAction } from './core.js'
 
 const compEl = $('completion'), hoverEl = $('hover'), sigEl = $('sig')
 
 export function setLsp(s) {
   state.lsp = s
-  $('st-clangd').textContent = { off: 'clangd off', starting: 'clangd starting…', on: 'clangd', error: 'clangd unavailable' }[s]
+  $('st-clangd').textContent = { off: 'clangd off', starting: 'clangd starting…', on: 'clangd', error: SEP === '\\' ? 'Install clangd…' : 'clangd unavailable' }[s]
 }
 
 export async function startIntel() {
@@ -73,6 +73,7 @@ listen('lsp-exit', () => {
 
 $('st-clangd').addEventListener('click', async () => {
   if (state.lsp === 'on') await stopIntel()
+  else if (state.lsp === 'error' && SEP === '\\') runAction('download-tools')
   else if (state.lsp !== 'starting' && state.root) await restartIntel()
 })
 

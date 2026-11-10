@@ -95,7 +95,7 @@ export const DEFAULT_LOOK = {
   uiFont: 'inter', uiSize: 12.5, radius: 4, density: 'normal',
   edFont: 'jetbrains', edCustom: '', edSize: 13, lineHeight: 1.55, caret: 'bar', rightMargin: 0, guides: true, nums: true, curline: true,
   glow: 'auto', glowStrength: 3, glowRadius: 200,
-  fxUi: 'auto', fxCaret: 'auto', fxTrail: 'auto',
+  fxUi: 'auto', fxCaret: 'auto', fxTrail: 'auto', fxType: 'auto',
 }
 
 export const look = { ...DEFAULT_LOOK, ...load('look', migrate()) }
@@ -173,6 +173,7 @@ export function apply() {
   root.dataset.fxUi = effect(look.fxUi)
   root.dataset.fxCaret = effect(look.fxCaret)
   root.dataset.fxTrail = effect(look.fxTrail)
+  root.dataset.fxType = effect(look.fxType)
   root.dataset.caret = look.caret
   root.dataset.guides = look.guides ? 'on' : 'off'
   root.dataset.nums = look.nums ? 'on' : 'off'

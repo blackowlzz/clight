@@ -5,7 +5,7 @@ let found = null
 
 function offer(info) {
   found = info
-  button.textContent = `Update to ${info.version}`
+  button.textContent = `↑ Update to ${info.version}`
   button.hidden = false
   app.fitBar?.()
 }
@@ -16,6 +16,7 @@ export async function check(manual = false) {
     if (info) {
       offer(info)
       if (manual) showDialog()
+      else toast(`clight ${info.version} is available. Click Update in the top bar`)
     } else if (manual) toast('clight is up to date')
   } catch (e) {
     if (manual) toast(`Couldn't check for updates: ${e}`)
@@ -51,7 +52,7 @@ async function install() {
     await invoke('update_install')
   } catch (e) {
     button.disabled = false
-    button.textContent = `Update to ${found.version}`
+    button.textContent = `↑ Update to ${found.version}`
     throw e
   }
 }

@@ -206,6 +206,7 @@ function interfacePage(rerender) {
     row('Interface animations', 'Popups, panels, hover. Auto turns them off on weak machines', pick('fxUi', AUTO)),
     row('Smooth caret', 'The caret glides to its new position', pick('fxCaret', AUTO)),
     row('Caret motion blur', 'A short streak behind the caret as it moves', pick('fxTrail', AUTO)),
+    row('Typing effects', 'A soft glow that follows the caret, a pulse on matching brackets, and a fade on new lines and saves', pick('fxType', AUTO)),
     h(
       'div',
       { class: 'set-actions' },

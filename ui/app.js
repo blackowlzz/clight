@@ -659,6 +659,7 @@ async function saveTab(t, { force = false, quiet = false } = {}) {
     }
     t.dirty = false
     renderTabs()
+    if (t.id === state.active) ed.flashSaved()
     await invoke('git_refresh', { id: t.id })
     if (t.id === state.active) ed.repaint()
     clearTimeout(gitTimer)

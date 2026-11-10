@@ -2,6 +2,7 @@ import { h, invoke, listen, app, state, load, store, reg, toast, guard, modal, S
 
 const LABEL = 'Download clangd utils'
 const DISMISSED = 'tools-dismissed'
+const REMIND_MS = 3 * 24 * 3600 * 1000
 
 let note = null
 let noteText = null
@@ -19,7 +20,7 @@ function hideNote() {
   note = null
 }
 
-function showNote(text = LABEL) {
+function showNote(text = `↓ ${LABEL}`) {
   if (!note) {
     noteText = h('button', { class: 'tn-open', onclick: () => guard(openMenu()) })
     const dismiss = h('button', {
@@ -27,7 +28,7 @@ function showNote(text = LABEL) {
       title: 'Dismiss',
       onclick: () => {
         if (busy) return
-        store(DISMISSED, true)
+        store(DISMISSED, Date.now())
         hideNote()
       },
     }, '×')
@@ -39,7 +40,7 @@ function showNote(text = LABEL) {
 
 async function install(ids, close) {
   busy = true
-  showNote('Downloading…')
+  showNote('↓ Downloading…')
   try {
     const failures = await invoke('tools_install', { ids })
     close()
@@ -90,12 +91,12 @@ listen('tools-progress', (e) => {
   const pct = Math.min(100, Math.floor((done / total) * 100))
   const el = bars.get(id)
   if (el) el.textContent = `${pct}%`
-  if (busy) showNote(`Downloading ${titles.get(id) ?? id} ${pct}%`)
+  if (busy) showNote(`↓ Downloading ${titles.get(id) ?? id} ${pct}%`)
 })
 
 reg('download-tools', `${LABEL}…`, null, openMenu, { hidden: SEP !== '\\' })
 
 export async function startup() {
   const list = await invoke('tools_status')
-  if (list.some((t) => t.recommended && !t.installed) && !load(DISMISSED, false)) showNote()
+  if (list.some((t) => t.recommended && !t.installed) && Date.now() - load(DISMISSED, 0) > REMIND_MS) showNote()
 }
