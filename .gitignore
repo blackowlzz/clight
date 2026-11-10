@@ -1,0 +1,4 @@
+target/
+src-tauri/gen/
+cmake-build-*/
+.clight/

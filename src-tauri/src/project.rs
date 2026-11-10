@@ -1,0 +1,301 @@
+use serde::Serialize;
+use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    ".cache",
+    ".idea",
+    ".vscode",
+    ".clight",
+    "node_modules",
+    "target",
+];
+const MAX_WALK: usize = 30_000;
+const MAX_GREP_FILE: u64 = 2 << 20;
+const MAX_GREP_HITS: usize = 400;
+
+fn skip(name: &str) -> bool {
+    SKIP_DIRS.contains(&name) || name.starts_with("cmake-build-")
+}
+
+#[derive(Serialize)]
+pub struct Entry {
+    pub name: String,
+    pub path: String,
+    pub dir: bool,
+}
+
+pub fn list_dir(path: &str, hidden: bool) -> Result<Vec<Entry>, String> {
+    let mut out: Vec<Entry> = fs::read_dir(path)
+        .map_err(|e| format!("{path}: {e}"))?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !hidden && name.starts_with('.') {
+                return None;
+            }
+            let dir = e.path().is_dir();
+            Some(Entry {
+                path: e.path().to_string_lossy().into_owned(),
+                name,
+                dir,
+            })
+        })
+        .collect();
+    out.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase()));
+    Ok(out)
+}
+
+fn walk(root: &Path, visit: &mut dyn FnMut(&Path, &fs::Metadata) -> bool) {
+    let mut stack = vec![root.to_path_buf()];
+    let mut seen = 0;
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            let Ok(ty) = e.file_type() else { continue };
+            if ty.is_dir() {
+                if !skip(&name) {
+                    stack.push(e.path());
+                }
+            } else if ty.is_file() {
+                seen += 1;
+                let Ok(meta) = e.metadata() else { continue };
+                if seen > MAX_WALK || !visit(&e.path(), &meta) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+pub fn list_files(root: &str) -> Vec<String> {
+    let mut out = vec![];
+    let base = Path::new(root);
+    walk(base, &mut |p, _| {
+        if let Ok(rel) = p.strip_prefix(base) {
+            out.push(rel.to_string_lossy().into_owned());
+        }
+        true
+    });
+    out.sort();
+    out
+}
+
+#[derive(Serialize)]
+pub struct Hit {
+    pub path: String,
+    pub rel: String,
+    pub line: usize,
+    pub col: usize,
+    pub text: String,
+}
+
+pub fn grep(root: &str, query: &str) -> Vec<Hit> {
+    let mut hits = vec![];
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return hits;
+    }
+    let base = Path::new(root);
+    walk(base, &mut |p, meta| {
+        if meta.len() > MAX_GREP_FILE {
+            return true;
+        }
+        let Ok(bytes) = fs::read(p) else { return true };
+        if bytes.iter().take(4096).any(|b| *b == 0) {
+            return true;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            return true;
+        };
+        for (i, l) in text.lines().enumerate() {
+            let lower = l.to_lowercase();
+            if let Some(b) = lower.find(&needle) {
+                hits.push(Hit {
+                    path: p.to_string_lossy().into_owned(),
+                    rel: p
+                        .strip_prefix(base)
+                        .unwrap_or(p)
+                        .to_string_lossy()
+                        .into_owned(),
+                    line: i,
+                    col: lower[..b].encode_utf16().count(),
+                    text: l.trim().chars().take(160).collect(),
+                });
+                if hits.len() >= MAX_GREP_HITS {
+                    return false;
+                }
+            }
+        }
+        true
+    });
+    hits.sort_by(|a, b| (&a.rel, a.line).cmp(&(&b.rel, b.line)));
+    hits
+}
+
+pub fn create_project(parent: &str, name: &str, cpp: bool) -> Result<String, String> {
+    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
+        return Err("Pick a simple folder name".into());
+    }
+    let dir = Path::new(parent).join(name);
+    if dir.exists() {
+        return Err(format!("{} already exists", dir.display()));
+    }
+    fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    let target: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let (lang, std_line, file, body) = if cpp {
+        (
+            "CXX",
+            "set(CMAKE_CXX_STANDARD 20)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)",
+            "main.cpp",
+            "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, world!\\n\";\n    return 0;\n}\n",
+        )
+    } else {
+        (
+            "C",
+            "set(CMAKE_C_STANDARD 17)\nset(CMAKE_C_STANDARD_REQUIRED ON)",
+            "main.c",
+            "#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello, world!\\n\");\n    return 0;\n}\n",
+        )
+    };
+    let cmake = format!("cmake_minimum_required(VERSION 3.16)\nproject({target} LANGUAGES {lang})\n\n{std_line}\n\nadd_executable({target} src/{file})\n");
+    fs::write(dir.join("CMakeLists.txt"), cmake).map_err(|e| e.to_string())?;
+    fs::write(dir.join("src").join(file), body).map_err(|e| e.to_string())?;
+    fs::write(dir.join(".gitignore"), "cmake-build-*/\n.clight/\n").map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+#[derive(Serialize)]
+pub struct Target {
+    pub name: String,
+    pub path: String,
+}
+
+pub fn request_codemodel(build: &Path) -> Result<(), String> {
+    let q = build.join(".cmake/api/v1/query");
+    fs::create_dir_all(&q).map_err(|e| e.to_string())?;
+    fs::write(q.join("codemodel-v2"), "").map_err(|e| e.to_string())
+}
+
+fn read_json(p: &Path) -> Option<Value> {
+    serde_json::from_slice(&fs::read(p).ok()?).ok()
+}
+
+pub fn cmake_targets(build: &Path) -> Vec<Target> {
+    let reply = build.join(".cmake/api/v1/reply");
+    let Ok(rd) = fs::read_dir(&reply) else {
+        return vec![];
+    };
+    let mut names: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("codemodel-v2-"))
+        })
+        .collect();
+    names.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
+    let Some(model) = names.last().and_then(|p| read_json(p)) else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for cfg in model["configurations"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice)
+    {
+        for t in cfg["targets"].as_array().map_or(&[][..], Vec::as_slice) {
+            let Some(file) = t["jsonFile"].as_str() else {
+                continue;
+            };
+            let Some(info) = read_json(&reply.join(file)) else {
+                continue;
+            };
+            if info["type"] != "EXECUTABLE" {
+                continue;
+            }
+            let (Some(name), Some(art)) =
+                (info["name"].as_str(), info["artifacts"][0]["path"].as_str())
+            else {
+                continue;
+            };
+            let art = Path::new(art);
+            let path = if art.is_absolute() {
+                art.to_path_buf()
+            } else {
+                build.join(art)
+            };
+            out.push(Target {
+                name: name.to_string(),
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+#[derive(Serialize)]
+pub struct Sys {
+    pub cores: usize,
+    pub total_mb: u64,
+    pub avail_mb: u64,
+    pub home: String,
+}
+
+#[cfg(target_os = "linux")]
+fn memory_mb() -> (u64, u64) {
+    let info = fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let field = |name: &str| {
+        info.lines()
+            .find(|l| l.starts_with(name))
+            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+            .unwrap_or(0)
+            / 1024
+    };
+    (field("MemTotal:"), field("MemAvailable:"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn memory_mb() -> (u64, u64) {
+    (0, 0)
+}
+
+pub fn sys_info() -> Sys {
+    let (total, avail) = memory_mb();
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/".into());
+    Sys {
+        cores: std::thread::available_parallelism().map_or(1, |n| n.get()),
+        total_mb: total,
+        avail_mb: avail,
+        home,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_names_cannot_escape_the_parent() {
+        assert!(create_project("/tmp", "../evil", true).is_err());
+        assert!(create_project("/tmp", "", true).is_err());
+    }
+}
