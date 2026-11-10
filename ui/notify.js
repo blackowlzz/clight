@@ -37,8 +37,10 @@ function make(id) {
     )
   }
   card.close = () => {
-    card.el.remove()
     cards.delete(id)
+    if (document.documentElement.dataset.fxUi !== 'on') return card.el.remove()
+    card.el.style.pointerEvents = 'none'
+    card.el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(14px)' }], { duration: 160, easing: 'ease-in' }).onfinish = () => card.el.remove()
   }
   return card
 }

@@ -27,7 +27,9 @@ const trail = $('caret-trail')
 const caretGlow = $('caret-glow')
 const ghostEl = $('ghost')
 let ghostText = ''
-let seenRev = -1, seenTotal = -1, seenDoc = null
+let seenRev = -1, seenTotal = -1, seenDoc = null, seenRow = -1, seenCol = 0
+let typedMarks = []
+const TYPED_MS = 260
 
 const live = new Map()
 const spare = []
@@ -253,9 +255,12 @@ function typingEffects(v, x, y, row) {
   const same = seenDoc === docId
   const edited = same && v.rev !== seenRev
   const grew = same && v.total === seenTotal + 1
+  const prevRow = seenRow, prevCol = seenCol
   seenDoc = docId
   seenRev = v.rev
   seenTotal = v.total
+  seenRow = row
+  seenCol = v.cur[1]
   if (root.dataset.fxType !== 'on') return
   const size = LH * 7
   caretGlow.style.width = caretGlow.style.height = size + 'px'
@@ -263,7 +268,43 @@ function typingEffects(v, x, y, row) {
   if (!edited) return
   caretGlow.getAnimations().forEach((a) => a.cancel())
   caretGlow.animate([{ opacity: 1 }, { opacity: 0.5 }], { duration: 420, easing: 'ease-out' })
+  const typed = v.cur[1] - prevCol
+  if (!grew && prevRow === row && typed > 0 && typed <= 80) typedMarks.push({ row, from: prevCol, to: v.cur[1], t: performance.now() })
+  fadeTyped(row)
   if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
+}
+
+/** Text you just wrote fades in with the same soft blur as the text the AI writes. */
+function fadeTyped(row) {
+  const now = performance.now()
+  typedMarks = typedMarks.filter((m) => m.row === row && now - m.t < TYPED_MS)
+  const el = live.get(row)?.l
+  if (!el || !typedMarks.length) return
+  const nodes = []
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    nodes.push([n, offset])
+    offset += n.data.length
+  }
+  const jobs = []
+  for (const m of typedMarks) {
+    nodes.forEach(([node, start], i) => {
+      const a = Math.max(m.from, start) - start
+      const b = Math.min(m.to, start + node.data.length) - start
+      if (b > a) jobs.push({ i, node, a, b, age: now - m.t })
+    })
+  }
+  jobs.sort((p, q) => q.i - p.i || q.a - p.a)
+  for (const j of jobs) {
+    const span = document.createElement('span')
+    span.className = 'typed'
+    span.style.animationDelay = `-${Math.round(j.age)}ms`
+    const range = document.createRange()
+    range.setStart(j.node, j.a)
+    range.setEnd(j.node, j.b)
+    range.surroundContents(span)
+  }
 }
 
 /** `ahead` is how many characters the caret is about to move, until the next repaint catches up. */

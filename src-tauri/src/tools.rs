@@ -185,6 +185,15 @@ static TOOLS: [Tool; 10] = [
 
 static BUSY: AtomicBool = AtomicBool::new(false);
 
+/// Frees the download lock even when the request is dropped halfway.
+struct Busy;
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
 fn applies(t: &Tool) -> bool {
     match t.os {
         Os::All => true,
@@ -454,6 +463,7 @@ pub async fn install(app: &AppHandle, ids: &[String]) -> Result<Vec<Failure>, St
     if BUSY.swap(true, Ordering::SeqCst) {
         return Err("Already downloading".into());
     }
+    let _busy = Busy;
     let mut failures = vec![];
     for tool in catalog()
         .into_iter()
@@ -467,7 +477,6 @@ pub async fn install(app: &AppHandle, ids: &[String]) -> Result<Vec<Failure>, St
         }
     }
     extend_path(app);
-    BUSY.store(false, Ordering::SeqCst);
     Ok(failures)
 }
 

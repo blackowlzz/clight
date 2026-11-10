@@ -17,6 +17,7 @@ struct Running {
     port: u16,
     used: Instant,
     model: &'static str,
+    ready: bool,
 }
 
 static ENGINE: Mutex<Option<Running>> = Mutex::new(None);
@@ -56,7 +57,7 @@ pub fn remove(app: &AppHandle, size: &str) {
 fn alive(model: &str) -> Option<u16> {
     let mut guard = ENGINE.lock().unwrap();
     let running = guard.as_mut()?;
-    if running.model != model {
+    if running.model != model || !running.ready {
         let mut old = guard.take()?;
         let _ = old.child.kill();
         let _ = old.child.wait();
@@ -162,33 +163,45 @@ fn start(app: &AppHandle, id: u32, size: &str) -> Result<String, String> {
         cmd.env("LD_LIBRARY_PATH", format!("{}:{old}", dir.display()));
     }
     lower_priority(&mut cmd);
-    let mut child = cmd
+    let child = cmd
         .spawn()
         .map_err(|e| format!("Couldn't start the small AI: {e}"))?;
-    let began = Instant::now();
-    loop {
-        if healthy(port) {
-            break;
-        }
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(format!(
-                "The small AI stopped while starting ({status}). {}",
-                log_tail(&log_path)
-            ));
-        }
-        if began.elapsed() > START_TIMEOUT {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("The small AI took too long to start".into());
-        }
-        std::thread::sleep(Duration::from_millis(150));
-    }
+    // Registered at once, so quitting while it loads still stops it.
     *ENGINE.lock().unwrap() = Some(Running {
         child,
         port,
         used: Instant::now(),
         model: model_tool,
+        ready: false,
     });
+    let began = Instant::now();
+    loop {
+        {
+            let mut guard = ENGINE.lock().unwrap();
+            let Some(running) = guard.as_mut() else {
+                return Err("The AI was stopped".into());
+            };
+            if let Ok(Some(status)) = running.child.try_wait() {
+                *guard = None;
+                return Err(format!(
+                    "The small AI stopped while starting ({status}). {}",
+                    log_tail(&log_path)
+                ));
+            }
+        }
+        if healthy(port) {
+            if let Some(running) = ENGINE.lock().unwrap().as_mut() {
+                running.ready = true;
+                running.used = Instant::now();
+            }
+            break;
+        }
+        if began.elapsed() > START_TIMEOUT {
+            stop();
+            return Err("The small AI took too long to start".into());
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
     WATCHER.call_once(|| {
         std::thread::spawn(|| loop {
             std::thread::sleep(Duration::from_secs(20));
