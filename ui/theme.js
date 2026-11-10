@@ -14,7 +14,7 @@ export const TOKENS = [
   ]],
   ['Syntax', [
     ['k', 'Keywords'], ['t', 'Built-in types'], ['y', 'Classes and types'], ['f', 'Functions'], ['v', 'Fields and globals'],
-    ['o', 'Namespaces'], ['r', 'Strings'], ['n', 'Numbers'], ['c', 'Comments'], ['d', 'Preprocessor'], ['w', 'Macros'],
+    ['o', 'Namespaces'], ['r', 'Strings'], ['x', 'Escape sequences'], ['n', 'Numbers'], ['c', 'Comments'], ['d', 'Preprocessor'], ['w', 'Macros'],
   ]],
   ['Signals', [
     ['err', 'Errors'], ['warn', 'Warnings'], ['bp', 'Breakpoints'], ['git-add', 'Git added'], ['git-mod', 'Git modified'], ['run', 'Run button'], ['glow', 'Mouse glow'],
@@ -25,15 +25,15 @@ const blackBase = {
   bg: '#000000', chrome: '#0c0c0c', hover: '#181818', active: '#222222', line: '#1f1f1f', 'line-strong': '#333333',
   text: '#e4e4e4', muted: '#8c8c8c', faint: '#5c5c5c', accent: '#e4e4e4',
   code: '#c4c4c4', sel: '#2e2e2e', mark: '#2a2a2a', num: '#444444', guide: '#1a1a1a', curline: '#0e0e0e', caret: '#e4e4e4',
-  k: '#e8e8e8', t: '#e8e8e8', y: '#e8e8e8', f: '#e8e8e8', v: '#c4c4c4', o: '#8c8c8c', r: '#8c8c8c', n: '#8c8c8c', c: '#5c5c5c', d: '#8c8c8c', w: '#8c8c8c',
+  k: '#e8e8e8', t: '#e8e8e8', y: '#e8e8e8', f: '#e8e8e8', v: '#c4c4c4', o: '#8c8c8c', r: '#8c8c8c', n: '#8c8c8c', c: '#5c5c5c', d: '#8c8c8c', w: '#8c8c8c', x: '#cc7832',
   err: '#e4e4e4', warn: '#8c8c8c', bp: '#e4e4e4', 'git-add': '#e4e4e4', 'git-mod': '#5c5c5c', glow: '#ffffff',
 }
-const jbSyntax = { code: '#bcbec4', k: '#cf8e6d', t: '#cf8e6d', y: '#b5b6e3', f: '#56a8f5', v: '#c77dbb', o: '#b5b6e3', r: '#6aab73', n: '#2aacb8', c: '#7a7e85', d: '#b3ae60', w: '#b3ae60', err: '#f75464', warn: '#d5b778', bp: '#db5c5c', 'git-add': '#57965c', 'git-mod': '#4a88c7' }
+const jbSyntax = { code: '#bcbec4', x: '#cf8e6d', k: '#cf8e6d', t: '#cf8e6d', y: '#b5b6e3', f: '#56a8f5', v: '#c77dbb', o: '#b5b6e3', r: '#6aab73', n: '#2aacb8', c: '#7a7e85', d: '#b3ae60', w: '#b3ae60', err: '#f75464', warn: '#d5b778', bp: '#db5c5c', 'git-add': '#57965c', 'git-mod': '#4a88c7' }
 const paperBase = {
   bg: '#ffffff', chrome: '#f6f6f6', hover: '#ececec', active: '#e2e2e2', line: '#e3e3e3', 'line-strong': '#c8c8c8',
   text: '#1a1a1a', muted: '#6a6a6a', faint: '#9a9a9a', accent: '#1a1a1a',
   code: '#333333', sel: '#d6d6d6', mark: '#e0e0e0', num: '#bbbbbb', guide: '#eeeeee', curline: '#f6f6f6', caret: '#1a1a1a',
-  k: '#111111', t: '#111111', y: '#111111', f: '#111111', v: '#333333', o: '#6a6a6a', r: '#6a6a6a', n: '#6a6a6a', c: '#9a9a9a', d: '#6a6a6a', w: '#6a6a6a',
+  k: '#111111', t: '#111111', y: '#111111', f: '#111111', v: '#333333', o: '#6a6a6a', r: '#6a6a6a', n: '#6a6a6a', c: '#9a9a9a', d: '#6a6a6a', w: '#6a6a6a', x: '#b85c00',
   err: '#1a1a1a', warn: '#6a6a6a', bp: '#1a1a1a', 'git-add': '#1a1a1a', 'git-mod': '#9a9a9a', glow: '#000000',
 }
 
@@ -52,27 +52,27 @@ export const PRESETS = [
   },
   {
     id: 'studio-light', name: 'Studio Light',
-    colors: { ...makeTheme('#ffffff', '#f7f8fa', '#dfe1e5', '#d5e1ff', '#ebecf0', '#c9ccd6', '#1e1f22', '#6c707e', '#a0a4b0', '#3574f0', '#a6d2ff', '#aeb3c2', '#f5f8fe', { code: '#080808', k: '#0033b3', t: '#0033b3', y: '#008080', f: '#00627a', v: '#871094', o: '#008080', r: '#067d17', n: '#1750eb', c: '#8c8c8c', d: '#9e880d', w: '#9e880d', err: '#e53e4d', warn: '#c78a00', bp: '#e53e4d', 'git-add': '#55a76a', 'git-mod': '#3574f0' }, {}), glow: '#000000' },
+    colors: { ...makeTheme('#ffffff', '#f7f8fa', '#dfe1e5', '#d5e1ff', '#ebecf0', '#c9ccd6', '#1e1f22', '#6c707e', '#a0a4b0', '#3574f0', '#a6d2ff', '#aeb3c2', '#f5f8fe', { code: '#080808', x: '#b85c00', k: '#0033b3', t: '#0033b3', y: '#008080', f: '#00627a', v: '#871094', o: '#008080', r: '#067d17', n: '#1750eb', c: '#8c8c8c', d: '#9e880d', w: '#9e880d', err: '#e53e4d', warn: '#c78a00', bp: '#e53e4d', 'git-add': '#55a76a', 'git-mod': '#3574f0' }, {}), glow: '#000000' },
   },
   {
     id: 'nord', name: 'Nord',
-    colors: makeTheme('#2e3440', '#272c36', '#3b4252', '#434c5e', '#232831', '#4c566a', '#eceff4', '#a5b0c2', '#6b768a', '#88c0d0', '#434c5e', '#4c566a', '#333a47', { code: '#d8dee9', k: '#81a1c1', t: '#81a1c1', y: '#8fbcbb', f: '#88c0d0', v: '#b48ead', o: '#8fbcbb', r: '#a3be8c', n: '#b48ead', c: '#616e88', d: '#5e81ac', w: '#d08770', err: '#bf616a', warn: '#ebcb8b', bp: '#bf616a', 'git-add': '#a3be8c', 'git-mod': '#81a1c1' }, {}),
+    colors: makeTheme('#2e3440', '#272c36', '#3b4252', '#434c5e', '#232831', '#4c566a', '#eceff4', '#a5b0c2', '#6b768a', '#88c0d0', '#434c5e', '#4c566a', '#333a47', { code: '#d8dee9', x: '#d08770', k: '#81a1c1', t: '#81a1c1', y: '#8fbcbb', f: '#88c0d0', v: '#b48ead', o: '#8fbcbb', r: '#a3be8c', n: '#b48ead', c: '#616e88', d: '#5e81ac', w: '#d08770', err: '#bf616a', warn: '#ebcb8b', bp: '#bf616a', 'git-add': '#a3be8c', 'git-mod': '#81a1c1' }, {}),
   },
   {
     id: 'catppuccin', name: 'Catppuccin',
-    colors: makeTheme('#1e1e2e', '#181825', '#313244', '#45475a', '#11111b', '#585b70', '#cdd6f4', '#a6adc8', '#6c7086', '#cba6f7', '#45475a', '#585b70', '#262637', { code: '#cdd6f4', k: '#cba6f7', t: '#f9e2af', y: '#f9e2af', f: '#89b4fa', v: '#f5c2e7', o: '#94e2d5', r: '#a6e3a1', n: '#fab387', c: '#6c7086', d: '#f5c2e7', w: '#fab387', err: '#f38ba8', warn: '#f9e2af', bp: '#f38ba8', 'git-add': '#a6e3a1', 'git-mod': '#89b4fa' }, {}),
+    colors: makeTheme('#1e1e2e', '#181825', '#313244', '#45475a', '#11111b', '#585b70', '#cdd6f4', '#a6adc8', '#6c7086', '#cba6f7', '#45475a', '#585b70', '#262637', { code: '#cdd6f4', x: '#fab387', k: '#cba6f7', t: '#f9e2af', y: '#f9e2af', f: '#89b4fa', v: '#f5c2e7', o: '#94e2d5', r: '#a6e3a1', n: '#fab387', c: '#6c7086', d: '#f5c2e7', w: '#fab387', err: '#f38ba8', warn: '#f9e2af', bp: '#f38ba8', 'git-add': '#a6e3a1', 'git-mod': '#89b4fa' }, {}),
   },
   {
     id: 'gruvbox', name: 'Gruvbox',
-    colors: makeTheme('#282828', '#1d2021', '#3c3836', '#504945', '#1d2021', '#665c54', '#ebdbb2', '#bdae93', '#7c6f64', '#fabd2f', '#504945', '#665c54', '#32302f', { code: '#ebdbb2', k: '#fb4934', t: '#fabd2f', y: '#fabd2f', f: '#b8bb26', v: '#83a598', o: '#8ec07c', r: '#b8bb26', n: '#d3869b', c: '#928374', d: '#8ec07c', w: '#fe8019', err: '#fb4934', warn: '#fabd2f', bp: '#fb4934', 'git-add': '#b8bb26', 'git-mod': '#83a598' }, {}),
+    colors: makeTheme('#282828', '#1d2021', '#3c3836', '#504945', '#1d2021', '#665c54', '#ebdbb2', '#bdae93', '#7c6f64', '#fabd2f', '#504945', '#665c54', '#32302f', { code: '#ebdbb2', x: '#fe8019', k: '#fb4934', t: '#fabd2f', y: '#fabd2f', f: '#b8bb26', v: '#83a598', o: '#8ec07c', r: '#b8bb26', n: '#d3869b', c: '#928374', d: '#8ec07c', w: '#fe8019', err: '#fb4934', warn: '#fabd2f', bp: '#fb4934', 'git-add': '#b8bb26', 'git-mod': '#83a598' }, {}),
   },
   {
     id: 'solarized', name: 'Solarized',
-    colors: makeTheme('#002b36', '#00232c', '#073642', '#0b4452', '#001e26', '#2a525e', '#93a1a1', '#839496', '#586e75', '#268bd2', '#0b4452', '#2a525e', '#04323e', { code: '#93a1a1', k: '#859900', t: '#b58900', y: '#b58900', f: '#268bd2', v: '#d33682', o: '#2aa198', r: '#2aa198', n: '#d33682', c: '#586e75', d: '#dc322f', w: '#cb4b16', err: '#dc322f', warn: '#b58900', bp: '#dc322f', 'git-add': '#859900', 'git-mod': '#268bd2' }, {}),
+    colors: makeTheme('#002b36', '#00232c', '#073642', '#0b4452', '#001e26', '#2a525e', '#93a1a1', '#839496', '#586e75', '#268bd2', '#0b4452', '#2a525e', '#04323e', { code: '#93a1a1', x: '#cb4b16', k: '#859900', t: '#b58900', y: '#b58900', f: '#268bd2', v: '#d33682', o: '#2aa198', r: '#2aa198', n: '#d33682', c: '#586e75', d: '#dc322f', w: '#cb4b16', err: '#dc322f', warn: '#b58900', bp: '#dc322f', 'git-add': '#859900', 'git-mod': '#268bd2' }, {}),
   },
   {
     id: 'contrast', name: 'High Contrast', bold: true,
-    colors: makeTheme('#000000', '#000000', '#2a2a2a', '#3d3d3d', '#6e6e6e', '#a0a0a0', '#ffffff', '#e0e0e0', '#bdbdbd', '#ffe600', '#5a4b00', '#bdbdbd', '#161616', { code: '#ffffff', k: '#ffe600', t: '#ffe600', y: '#7fe9ff', f: '#9dd8ff', v: '#ffb3f2', o: '#7fe9ff', r: '#8dff8d', n: '#ffc77f', c: '#bdbdbd', d: '#ffb37f', w: '#ffb37f', err: '#ff5c5c', warn: '#ffe600', bp: '#ff5c5c', 'git-add': '#8dff8d', 'git-mod': '#7fbfff' }, {}),
+    colors: makeTheme('#000000', '#000000', '#2a2a2a', '#3d3d3d', '#6e6e6e', '#a0a0a0', '#ffffff', '#e0e0e0', '#bdbdbd', '#ffe600', '#5a4b00', '#bdbdbd', '#161616', { code: '#ffffff', x: '#ffb37f', k: '#ffe600', t: '#ffe600', y: '#7fe9ff', f: '#9dd8ff', v: '#ffb3f2', o: '#7fe9ff', r: '#8dff8d', n: '#ffc77f', c: '#bdbdbd', d: '#ffb37f', w: '#ffb37f', err: '#ff5c5c', warn: '#ffe600', bp: '#ff5c5c', 'git-add': '#8dff8d', 'git-mod': '#7fbfff' }, {}),
   },
 ]
 

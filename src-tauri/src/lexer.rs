@@ -51,6 +51,7 @@ pub const USER_TYPE: u8 = b'y';
 pub const NAMESPACE: u8 = b'o';
 pub const MACRO: u8 = b'w';
 pub const MEMBER: u8 = b'v';
+pub const ESCAPE: u8 = b'x';
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tok {
@@ -267,6 +268,56 @@ fn scan_quoted(b: &[u8], mut i: usize, quote: u8) -> (usize, bool) {
     (b.len(), false)
 }
 
+/// Length of the valid escape sequence at the start of `s`, which begins with a backslash.
+fn escape_len(s: &[u8]) -> usize {
+    let hex_run = |max: usize| {
+        s[2..]
+            .iter()
+            .take(max)
+            .take_while(|c| c.is_ascii_hexdigit())
+            .count()
+    };
+    match s.get(1) {
+        Some(
+            b'n' | b't' | b'r' | b'a' | b'b' | b'f' | b'v' | b'e' | b'?' | b'\\' | b'\'' | b'"',
+        ) => 2,
+        Some(b'0'..=b'7') => {
+            1 + s[1..]
+                .iter()
+                .take(3)
+                .take_while(|c| (b'0'..=b'7').contains(*c))
+                .count()
+        }
+        Some(b'x') => match hex_run(usize::MAX) {
+            0 => 0,
+            digits => 2 + digits,
+        },
+        Some(b'u') if hex_run(4) == 4 => 6,
+        Some(b'U') if hex_run(8) == 8 => 10,
+        _ => 0,
+    }
+}
+
+fn push_quoted(out: &mut Vec<Tok>, b: &[u8], start: usize, end: usize) {
+    let (mut from, mut i) = (start, start);
+    while i < end {
+        if b[i] != b'\\' {
+            i += 1;
+            continue;
+        }
+        match escape_len(&b[i..end]) {
+            0 => i += 2,
+            len => {
+                push(out, from, i, STRING);
+                push(out, i, i + len, ESCAPE);
+                i += len;
+                from = i;
+            }
+        }
+    }
+    push(out, from, end, STRING);
+}
+
 fn ends_with_backslash(b: &[u8]) -> bool {
     b.last() == Some(&b'\\')
 }
@@ -288,7 +339,7 @@ fn lex_c(b: &[u8], state: u32, cpp: bool, raws: &mut Vec<String>, out: &mut Vec<
         },
         STRING_CONT => {
             let (e, closed) = scan_quoted(b, 0, b'"');
-            push(out, 0, e, STRING);
+            push_quoted(out, b, 0, e);
             if !closed {
                 return if ends_with_backslash(b) {
                     STRING_CONT
@@ -375,7 +426,7 @@ fn lex_c(b: &[u8], state: u32, cpp: bool, raws: &mut Vec<String>, out: &mut Vec<
         }
         if c == b'"' {
             let (e, closed) = scan_quoted(b, i + 1, b'"');
-            push(out, i, e, STRING);
+            push_quoted(out, b, i, e);
             if !closed && ends_with_backslash(b) {
                 return STRING_CONT;
             }
@@ -384,7 +435,7 @@ fn lex_c(b: &[u8], state: u32, cpp: bool, raws: &mut Vec<String>, out: &mut Vec<
         }
         if c == b'\'' {
             let (e, _) = scan_quoted(b, i + 1, b'\'');
-            push(out, i, e, STRING);
+            push_quoted(out, b, i, e);
             i = e;
             continue;
         }
@@ -447,7 +498,7 @@ fn lex_c(b: &[u8], state: u32, cpp: bool, raws: &mut Vec<String>, out: &mut Vec<
             }
             if (next == b'"' || next == b'\'') && matches!(word, b"L" | b"u" | b"U" | b"u8") {
                 let (e, closed) = scan_quoted(b, i + 1, next);
-                push(out, start, e, STRING);
+                push_quoted(out, b, start, e);
                 if !closed && next == b'"' && ends_with_backslash(b) {
                     return STRING_CONT;
                 }
@@ -565,6 +616,49 @@ mod tests {
             .map(|t| (line[t.start as usize..t.end as usize].to_string(), t.tag))
             .collect();
         (t, next)
+    }
+
+    fn string_parts(line: &str) -> Vec<(String, u8)> {
+        let mut toks = vec![];
+        lex(line, NORMAL, Lang::Cpp, &mut vec![], &mut toks);
+        toks.iter()
+            .map(|t| (line[t.start as usize..t.end as usize].to_string(), t.tag))
+            .collect()
+    }
+
+    #[test]
+    fn escape_sequences_get_their_own_token() {
+        assert_eq!(
+            string_parts(r#""a\n\x41\101\u00e8b""#),
+            vec![
+                ("\"a".to_string(), STRING),
+                ("\\n".to_string(), ESCAPE),
+                ("\\x41".to_string(), ESCAPE),
+                ("\\101".to_string(), ESCAPE),
+                ("\\u00e8".to_string(), ESCAPE),
+                ("b\"".to_string(), STRING),
+            ]
+        );
+        assert_eq!(
+            string_parts(r"'\n'"),
+            vec![
+                ("'".to_string(), STRING),
+                ("\\n".to_string(), ESCAPE),
+                ("'".to_string(), STRING),
+            ]
+        );
+    }
+
+    #[test]
+    fn invalid_escapes_and_raw_strings_stay_plain() {
+        assert_eq!(
+            string_parts(r#""\q\x\u12""#),
+            vec![(r#""\q\x\u12""#.to_string(), STRING)]
+        );
+        assert_eq!(
+            string_parts(r#"R"(a\n)""#),
+            vec![(r#"R"(a\n)""#.to_string(), STRING)]
+        );
     }
 
     #[test]

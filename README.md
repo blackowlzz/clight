@@ -40,9 +40,16 @@ Mostly the same as CLion. Ctrl+Shift+A finds any command if you forget one.
 | Ctrl+B, Alt+F7 | Go to definition, find usages |
 | Shift+F6, Alt+Enter | Rename, quick fix |
 | Ctrl+Alt+L | Format |
+| Ctrl+Shift+Enter | Complete the statement |
+| Shift+Enter, Ctrl+Alt+Enter | New line below, above |
+| Ctrl+Shift+U | Toggle case |
+| Ctrl+Shift+M | Matching bracket |
+| Ctrl+Shift+Backspace | Last edit |
 | Ctrl+F9, Shift+F10, Shift+F9 | Build, run, debug |
 | F7, F8, F9 | Step in, step over, resume |
 | Alt+F12 | Terminal |
+
+Drag a selection to move it, or hold Ctrl to copy it. Ctrl+wheel changes the font size.
 
 From a terminal you can open the current folder with `clight .` or `cl .`. On the AppImage, turn that on from Help > Install clight and cl Commands. On Windows the installer sets them up, so just open a new terminal afterwards. Inside a Visual Studio Developer Prompt `cl` is the MSVC compiler, so use `clight .` there.
 

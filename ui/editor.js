@@ -1,6 +1,8 @@
 import { invoke, $, keyName, root } from './core.js'
+import * as theme from './theme.js'
 
 const scroll = $('scroll'), sizer = $('sizer'), gutter = $('gutter'), linesEl = $('lines'), gmarks = $('gmarks')
+const dropCaret = $('drop-caret')
 const caret = $('caret'), curline = $('curline'), execline = $('execline'), selEl = $('sel'), marksEl = $('marks')
 const diagsEl = $('diags'), occEl = $('occ'), pairEl = $('pair'), ime = $('ime')
 
@@ -305,6 +307,7 @@ export function hooks(h) {
 }
 
 let dragging = false
+let moving = null
 let lastPoint = null
 let edgeTimer = 0
 
@@ -317,14 +320,38 @@ function dragTo(e) {
 
 function edgeScroll() {
   edgeTimer = 0
-  if (!dragging || !lastPoint) return
+  if ((!dragging && !moving?.active) || !lastPoint) return
   const r = scroll.getBoundingClientRect()
   const dy = lastPoint.clientY < r.top ? -LH * 2 : lastPoint.clientY > r.bottom ? LH * 2 : 0
   if (dy) {
     scroll.scrollTop += dy
-    dragTo(lastPoint)
+    if (moving) showDrop(lastPoint)
+    else dragTo(lastPoint)
     edgeTimer = setTimeout(edgeScroll, 40)
   }
+}
+
+function inSelection(e) {
+  if (!view) return false
+  const r = scroll.getBoundingClientRect()
+  const c = pointToCell(e)
+  const vcol = Math.floor((e.clientX - r.left + scroll.scrollLeft - GW - PAD) / CH)
+  return view.sel.some(([l, a, b]) => l === c.line && vcol >= a && vcol < b)
+}
+
+function showDrop(e) {
+  lastPoint = e
+  const c = pointToCell(e)
+  const row = view ? Math.min(c.line, view.n - 1) : c.line
+  const length = live.get(row)?.l.textContent.length ?? c.vcol
+  dropCaret.style.transform = `translate(${PAD + Math.min(c.vcol, length) * CH}px,${row * LH}px)`
+  dropCaret.hidden = false
+}
+
+function endMove() {
+  moving = null
+  dropCaret.hidden = true
+  scroll.classList.remove('moving')
 }
 
 const lastDown = { time: -Infinity, x: 0, y: 0, clicks: 0 }
@@ -353,6 +380,11 @@ scroll.addEventListener('pointerdown', (e) => {
     return
   }
   const clicks = countClicks(e)
+  if (clicks === 1 && !e.shiftKey && inSelection(e)) {
+    moving = { x: e.clientX, y: e.clientY, cell: c, active: false }
+    scroll.setPointerCapture(e.pointerId)
+    return
+  }
   if (clicks === 2) send({ t: 'word', ...c })
   else if (clicks >= 3) send({ t: 'select_line', line: c.line })
   else {
@@ -368,6 +400,14 @@ scroll.addEventListener('pointerdown', (e) => {
 
 let hoverTimer = 0
 scroll.addEventListener('pointermove', (e) => {
+  if (moving) {
+    if (!moving.active && Math.hypot(e.clientX - moving.x, e.clientY - moving.y) < 4) return
+    moving.active = true
+    scroll.classList.add('moving')
+    showDrop(e)
+    if (!edgeTimer) edgeTimer = setTimeout(edgeScroll, 40)
+    return
+  }
   if (dragging) {
     dragTo(e)
     if (!edgeTimer) edgeTimer = setTimeout(edgeScroll, 40)
@@ -386,8 +426,37 @@ scroll.addEventListener('pointerleave', () => clearTimeout(hoverTimer))
 const stopDrag = () => {
   dragging = false
 }
-scroll.addEventListener('pointerup', stopDrag)
-scroll.addEventListener('pointercancel', stopDrag)
+scroll.addEventListener('pointerup', (e) => {
+  stopDrag()
+  if (!moving) return
+  const { active, cell } = moving
+  endMove()
+  if (active) {
+    send({ t: 'move_selection', ...pointToCell(e), copy: e.ctrlKey })
+    return
+  }
+  send({ t: 'click', ...cell, ext: false })
+  if (e.ctrlKey) hook.ctrlClick()
+})
+scroll.addEventListener('pointercancel', () => {
+  stopDrag()
+  endMove()
+})
+
+scroll.addEventListener(
+  'wheel',
+  (e) => {
+    if (!e.ctrlKey) return
+    e.preventDefault()
+    const size = Math.max(10, Math.min(24, theme.look.edSize + (e.deltaY < 0 ? 1 : -1)))
+    if (size === theme.look.edSize) return
+    theme.look.edSize = size
+    theme.save()
+    theme.apply()
+    measure()
+  },
+  { passive: false },
+)
 
 scroll.addEventListener('contextmenu', (e) => {
   e.preventDefault()
@@ -422,6 +491,16 @@ ime.addEventListener('keydown', (e) => {
   const name = keyName(e)
   if (hook.beforeKey(e, name)) {
     e.preventDefault()
+    return
+  }
+  if (name === 'Escape' && moving) {
+    e.preventDefault()
+    endMove()
+    return
+  }
+  if (name === 'C-ArrowUp' || name === 'C-ArrowDown') {
+    e.preventDefault()
+    scroll.scrollTop += name === 'C-ArrowUp' ? -LH : LH
     return
   }
   if (name === 'C-x') {

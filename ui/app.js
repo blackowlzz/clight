@@ -738,6 +738,7 @@ ed.configure({
     if (lastRev.get(id) !== v.rev) {
       const seen = lastRev.has(id)
       lastRev.set(id, v.rev)
+      if (seen && !tab.virtual) lastEdit = { path: tab.path, line: v.line, col: v.col - 1 }
       if (seen) {
         clearTimeout(lspTimer)
         lspTimer = setTimeout(() => intel.syncDoc(id), 450)
@@ -750,6 +751,7 @@ ed.configure({
   },
 })
 
+let lastEdit = null
 let problemsTimer = 0
 function requestSemantic(id) {
   if (!theme.isColored() || state.lsp !== 'on') return
@@ -1034,6 +1036,12 @@ reg('delete-line', 'Delete Line', 'C-y', cmd({ t: 'delete_line' }), editorOnly)
 reg('move-up', 'Move Line Up', 'A-S-ArrowUp', cmd({ t: 'move_lines', up: true }), editorOnly)
 reg('move-down', 'Move Line Down', 'A-S-ArrowDown', cmd({ t: 'move_lines', up: false }), editorOnly)
 reg('join', 'Join Lines', 'C-S-j', cmd({ t: 'join_lines' }), editorOnly)
+reg('line-below', 'Start New Line', 'S-Enter', cmd({ t: 'new_line_below' }), editorOnly)
+reg('line-above', 'Start New Line Above', 'C-A-Enter', cmd({ t: 'new_line_above' }), editorOnly)
+reg('complete-statement', 'Complete Current Statement', 'C-S-Enter', cmd({ t: 'complete_statement' }), editorOnly)
+reg('toggle-case', 'Toggle Case', 'C-S-u', cmd({ t: 'toggle_case' }), editorOnly)
+reg('goto-bracket', 'Move Caret to Matching Bracket', 'C-S-m', cmd({ t: 'goto_bracket' }), editorOnly)
+reg('last-edit', 'Last Edit Location', 'C-S-Backspace', () => lastEdit && guard(jumpTo(lastEdit.path, lastEdit.line, lastEdit.col)), editorOnly)
 reg('fold', 'Fold Block', 'C--', cmd({ t: 'fold_caret', fold: true }), editorOnly)
 reg('unfold', 'Unfold Block', 'C-=', cmd({ t: 'fold_caret', fold: false }), editorOnly)
 reg('unfold-it', 'Unfold Block', 'C-S-+', cmd({ t: 'fold_caret', fold: false }), { ...editorOnly, hidden: true })

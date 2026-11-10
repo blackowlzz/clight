@@ -44,6 +44,16 @@ pub enum Cmd {
         line: usize,
     },
     SelectAll,
+    MoveSelection {
+        line: usize,
+        vcol: usize,
+        copy: bool,
+    },
+    NewLineBelow,
+    NewLineAbove,
+    CompleteStatement,
+    ToggleCase,
+    GotoBracket,
     Undo,
     Redo,
     ToggleComment,
@@ -118,6 +128,11 @@ impl Cmd {
                 | ReplaceAll { .. }
                 | MoveLines { .. }
                 | JoinLines
+                | MoveSelection { .. }
+                | NewLineBelow
+                | NewLineAbove
+                | CompleteStatement
+                | ToggleCase
         )
     }
 }
@@ -574,7 +589,8 @@ impl Doc {
                     t.next();
                 }
                 if t.peek().is_some_and(|k| {
-                    k.start as usize <= i && matches!(k.tag, lexer::COMMENT | lexer::STRING)
+                    k.start as usize <= i
+                        && matches!(k.tag, lexer::COMMENT | lexer::STRING | lexer::ESCAPE)
                 }) {
                     continue;
                 }
@@ -1093,6 +1109,124 @@ impl Doc {
         } else {
             self.replace_sel(&format!("\n{indent}"));
         }
+    }
+
+    fn move_selection(&mut self, line: usize, vcol: usize, copy: bool) {
+        if !self.has_sel() {
+            return;
+        }
+        let (a, b) = self.sel_range();
+        let line = self.row_to_line(line);
+        let at = self.at(line, self.col_from_vcol(line, vcol));
+        if at > a && at < b || (!copy && (at == a || at == b)) {
+            return;
+        }
+        let text: String = self.rope.slice(a..b).into();
+        let len = b - a;
+        let start = if copy {
+            self.edit(at, at, &text);
+            at
+        } else if at >= b {
+            self.edit(at, at, &text);
+            self.edit(a, b, "");
+            at - len
+        } else {
+            self.edit(a, b, "");
+            self.edit(at, at, &text);
+            at
+        };
+        self.anchor = start;
+        self.cur = start + len;
+    }
+
+    fn line_end(&self, line: usize) -> usize {
+        self.rope.line_to_char(line) + self.line_len(line)
+    }
+
+    fn new_line_below(&mut self) {
+        let (line, _) = self.pos(self.cur);
+        self.set(self.line_end(line));
+        self.newline();
+    }
+
+    fn new_line_above(&mut self) {
+        let (line, _) = self.pos(self.cur);
+        let start = self.rope.line_to_char(line);
+        let indent = self.leading_ws(line);
+        self.edit(start, start, &format!("{indent}\n"));
+        self.set(start + indent.chars().count());
+    }
+
+    fn complete_statement(&mut self) {
+        let (line, _) = self.pos(self.cur);
+        let text = self.line_text(line).into_owned();
+        let code = text.trim();
+        let end = self.rope.line_to_char(line) + text.trim_end().chars().count();
+        self.set(end);
+        let finished = code.is_empty()
+            || code.starts_with('#')
+            || code.contains("//")
+            || code.ends_with(['}', '{', ';', ',', '(', ':', '\\']);
+        if self.lang == Lang::Plain || finished {
+            self.new_line_below();
+            return;
+        }
+        let keyword = code
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap_or("");
+        if matches!(keyword, "if" | "for" | "while" | "switch") && code.ends_with(')') {
+            let indent = self.leading_ws(line);
+            let unit = self.indent_unit();
+            self.edit(end, end, &format!(" {{\n{indent}{unit}\n{indent}}}"));
+            self.set(end + 3 + indent.chars().count() + unit.chars().count());
+            return;
+        }
+        self.edit(end, end, ";");
+        self.set(end + 1);
+        self.new_line_below();
+    }
+
+    fn toggle_case(&mut self) {
+        let keep_selection = self.has_sel();
+        let (a, b) = if keep_selection {
+            self.sel_range()
+        } else {
+            match self.word_range(self.cur) {
+                Some(range) => range,
+                None => return,
+            }
+        };
+        let text: String = self.rope.slice(a..b).into();
+        let next = if text.chars().any(char::is_lowercase) {
+            text.to_uppercase()
+        } else {
+            text.to_lowercase()
+        };
+        if next == text {
+            return;
+        }
+        let cur = self.cur;
+        self.edit(a, b, &next);
+        let end = a + next.chars().count();
+        if keep_selection {
+            self.anchor = a;
+            self.cur = end;
+        } else {
+            self.set(cur.min(end));
+        }
+    }
+
+    fn goto_bracket(&mut self) {
+        let Some((a, b)) = self.matching_bracket() else {
+            return;
+        };
+        let target = if self.cur == a || self.cur == a + 1 {
+            b
+        } else {
+            a
+        };
+        self.set(target);
     }
 
     fn backspace(&mut self) {
@@ -1751,6 +1885,12 @@ impl Doc {
                 self.anchor = 0;
                 self.cur = self.rope.len_chars();
             }
+            MoveSelection { line, vcol, copy } => self.move_selection(line, vcol, copy),
+            NewLineBelow => self.new_line_below(),
+            NewLineAbove => self.new_line_above(),
+            CompleteStatement => self.complete_statement(),
+            ToggleCase => self.toggle_case(),
+            GotoBracket => self.goto_bracket(),
             Undo => self.undo(),
             Redo => self.redo(),
             ToggleComment => self.toggle_comment(),
@@ -2200,6 +2340,107 @@ mod tests {
             rows: None,
         })
         .unwrap();
+    }
+
+    fn select(d: &mut Doc, from: usize, to: usize) {
+        d.anchor = from;
+        d.cur = to;
+    }
+
+    fn drop_at(d: &mut Doc, vcol: usize, copy: bool) {
+        d.run(Cmd::MoveSelection {
+            line: 0,
+            vcol,
+            copy,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn dragging_a_selection_moves_it_in_one_undo_step() {
+        let mut d = cpp("one two three");
+        select(&mut d, 4, 8);
+        drop_at(&mut d, 13, false);
+        assert_eq!(txt(&d), "one threetwo ");
+        assert_eq!(d.sel_range(), (9, 13));
+        d.run(Cmd::Undo).unwrap();
+        assert_eq!(txt(&d), "one two three");
+
+        select(&mut d, 4, 8);
+        drop_at(&mut d, 0, false);
+        assert_eq!(txt(&d), "two one three");
+        assert_eq!(d.sel_range(), (0, 4));
+    }
+
+    #[test]
+    fn dropping_inside_the_selection_changes_nothing() {
+        let mut d = cpp("one two");
+        select(&mut d, 0, 4);
+        drop_at(&mut d, 2, false);
+        drop_at(&mut d, 4, false);
+        drop_at(&mut d, 2, true);
+        assert_eq!(txt(&d), "one two");
+    }
+
+    #[test]
+    fn dragging_with_copy_keeps_the_original() {
+        let mut d = cpp("ab cd");
+        select(&mut d, 0, 2);
+        drop_at(&mut d, 5, true);
+        assert_eq!(txt(&d), "ab cdab");
+        assert_eq!(d.sel_range(), (5, 7));
+    }
+
+    #[test]
+    fn new_lines_above_and_below_keep_the_indent() {
+        let mut d = cpp("    int a;");
+        d.run(Cmd::Goto { line: 0, col: 6 }).unwrap();
+        d.run(Cmd::NewLineBelow).unwrap();
+        assert_eq!(txt(&d), "    int a;\n    ");
+        assert_eq!(d.cursor_pos(), (1, 4));
+        d.run(Cmd::NewLineAbove).unwrap();
+        assert_eq!(txt(&d), "    int a;\n    \n    ");
+        assert_eq!(d.cursor_pos(), (1, 4));
+    }
+
+    #[test]
+    fn complete_statement_adds_what_is_missing() {
+        let mut d = cpp("    foo(1)");
+        d.run(Cmd::Goto { line: 0, col: 5 }).unwrap();
+        d.run(Cmd::CompleteStatement).unwrap();
+        assert_eq!(txt(&d), "    foo(1);\n    ");
+
+        let mut d = cpp("if (x)");
+        d.run(Cmd::CompleteStatement).unwrap();
+        assert_eq!(txt(&d), "if (x) {\n    \n}");
+        assert_eq!(d.cursor_pos(), (1, 4));
+
+        let mut d = cpp("int a;");
+        d.run(Cmd::CompleteStatement).unwrap();
+        assert_eq!(txt(&d), "int a;\n");
+    }
+
+    #[test]
+    fn toggle_case_flips_the_word_or_selection() {
+        let mut d = cpp("foo Bar");
+        d.run(Cmd::ToggleCase).unwrap();
+        assert_eq!(txt(&d), "FOO Bar");
+        d.run(Cmd::ToggleCase).unwrap();
+        assert_eq!(txt(&d), "foo Bar");
+        select(&mut d, 4, 7);
+        d.run(Cmd::ToggleCase).unwrap();
+        assert_eq!(txt(&d), "foo BAR");
+        assert_eq!(d.sel_range(), (4, 7));
+    }
+
+    #[test]
+    fn goto_bracket_jumps_back_and_forth() {
+        let mut d = cpp("f(a, b)");
+        d.run(Cmd::Goto { line: 0, col: 1 }).unwrap();
+        d.run(Cmd::GotoBracket).unwrap();
+        assert_eq!(d.cursor_pos(), (0, 6));
+        d.run(Cmd::GotoBracket).unwrap();
+        assert_eq!(d.cursor_pos(), (0, 1));
     }
 
     #[test]

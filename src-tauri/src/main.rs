@@ -441,12 +441,12 @@ fn task_start(
         .start(app, &program, &args, &cwd, &env, background)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn task_stdin(text: String, state: State<AppState>) -> Res<()> {
     state.runner.write_stdin(&text)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn task_kill(state: State<AppState>) {
     state.runner.kill();
 }

@@ -5,7 +5,7 @@
   --bg: #000; --chrome: #0c0c0c; --hover: #181818; --active: #222; --line: #1f1f1f; --line-strong: #333;
   --text: #e4e4e4; --muted: #8c8c8c; --faint: #5c5c5c; --accent: #e4e4e4; --accent-text: #000;
   --code: #c4c4c4; --sel: #2e2e2e; --mark: #2a2a2a; --num: #444; --guide: #1a1a1a; --curline: #0e0e0e; --caret: #e4e4e4;
-  --k: #e8e8e8; --t: #e8e8e8; --f: #e8e8e8; --r: #8c8c8c; --n: #8c8c8c; --c: #5c5c5c; --d: #8c8c8c; --y: #e8e8e8; --o: #8c8c8c; --w: #8c8c8c; --v: #c4c4c4;
+  --k: #e8e8e8; --t: #e8e8e8; --f: #e8e8e8; --r: #8c8c8c; --n: #8c8c8c; --c: #5c5c5c; --d: #8c8c8c; --y: #e8e8e8; --o: #8c8c8c; --w: #8c8c8c; --v: #c4c4c4; --x: #cc7832;
   --err: #e4e4e4; --warn: #8c8c8c; --bp: #e4e4e4; --git-add: #e4e4e4; --git-mod: #5c5c5c; --run: #fff; --run-text: #000;
   --kw: 600; --cs: italic; --shadow: rgba(0,0,0,.5); --scrim: rgba(0,0,0,.4);
   --glow-c: rgba(255,255,255,.05); --glow-size: 200px;
@@ -223,6 +223,8 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 #diags > div { position: absolute; height: 1px; }
 #diags > .e { background: var(--err); height: 2px; }
 #diags > .w { background: repeating-linear-gradient(90deg, var(--warn) 0 2px, transparent 2px 4px); }
+#drop-caret { position: absolute; top: 0; left: 0; width: 2px; height: var(--lh); background: var(--accent); pointer-events: none; }
+#scroll.moving { cursor: default; }
 #caret { position: absolute; top: 0; left: 0; width: 2px; height: var(--lh); background: var(--caret); z-index: 2; pointer-events: none; }
 :root[data-caret='block'] #caret { width: 1ch; opacity: .55; }
 :root[data-caret='underline'] #caret { width: 1ch; height: 2px; margin-top: calc(var(--lh) - 2px); }
@@ -236,6 +238,7 @@ k { color: var(--k); font-weight: var(--kw); }
 t { color: var(--t); }
 f { color: var(--f); }
 r { color: var(--r); }
+x { color: var(--x); }
 n { color: var(--n); }
 c { color: var(--c); font-style: var(--cs); }
 d { color: var(--d); font-weight: var(--kw); }

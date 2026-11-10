@@ -200,16 +200,21 @@ impl Runner {
     }
 
     pub fn kill(&self) {
-        let slot = self.current.lock().unwrap();
-        let Some(r) = slot.as_ref() else { return };
+        let pid = self.current.lock().unwrap().as_ref().map(|r| r.pid);
+        let Some(pid) = pid else { return };
         #[cfg(unix)]
         unsafe {
-            libc::kill(-(r.pid as i32), libc::SIGKILL);
+            libc::kill(-(pid as i32), libc::SIGKILL);
         }
         #[cfg(not(unix))]
         {
-            let _ = Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &r.pid.to_string()])
+            let mut taskkill = Command::new("taskkill");
+            clean_env(&mut taskkill);
+            let _ = taskkill
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .status();
         }
     }
