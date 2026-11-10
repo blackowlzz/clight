@@ -87,7 +87,7 @@
           <button data-bottom="build" title="Build output (Alt+B)"><svg class="ic"><use href="#i-hammer" /></svg></button>
           <button data-bottom="run" title="Run output (Alt+4)"><svg class="ic"><use href="#i-play" /></svg></button>
           <button data-bottom="debug" title="Debug (Alt+5)"><svg class="ic"><use href="#i-bug" /></svg></button>
-          <button id="rail-chat" data-bottom="chat" title="AI chat (Alt+8)" hidden><svg class="ic"><use href="#i-chat" /></svg></button>
+          <button id="rail-chat" title="AI chat (Alt+8)" hidden><svg class="ic"><use href="#i-chat" /></svg></button>
           <button data-bottom="terminal" title="Terminal (Alt+F12)"><svg class="ic"><use href="#i-terminal" /></svg></button>
           <button data-bottom="problems" title="Problems (Alt+6)"><svg class="ic"><use href="#i-alert" /></svg></button>
           <button id="rail-gear" title="Settings (Ctrl+Alt+S)"><svg class="ic"><use href="#i-gear" /></svg></button>
@@ -155,9 +155,13 @@
             <div id="v-problems" class="view list-view" hidden></div>
             <div id="v-find" class="view list-view" hidden></div>
             <div id="v-terminal" class="view" hidden></div>
-            <div id="v-chat" class="view chatview" hidden></div>
           </section>
         </main>
+        <div class="vr" id="right-rz" hidden></div>
+        <aside id="right" class="island" hidden>
+          <div class="toolhead"><span>AI Chat</span><span class="grow"></span><span id="right-actions" class="headacts"></span><button id="right-x" class="iconbtn" title="Close"><svg class="ic"><use href="#i-x" /></svg></button></div>
+          <div id="v-chat" class="view chatview"></div>
+        </aside>
       </div>
 
       <footer id="status" hidden>

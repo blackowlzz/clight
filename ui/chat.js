@@ -80,6 +80,58 @@ function setBusy(on) {
   busy = on
   sendBtn.textContent = on ? 'Stop' : 'Send'
   sendBtn.classList.toggle('primary', !on)
+  sendBtn.closest('.chat-composer').classList.toggle('busy', on)
+}
+
+const FRESH_MS = 320
+const fx = () => document.documentElement.dataset.fxUi === 'on'
+
+function dots() {
+  return h('span', { class: 'chat-thinking' }, h('i'), h('i'), h('i'))
+}
+
+/** Wraps the text that arrived in the last moments, so it fades in and keeps going across redraws. */
+function freshen(body, run) {
+  const nodes = []
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement.closest('.chat-codehead, .chat-cursor') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  })
+  let total = ''
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    nodes.push([n, total.length])
+    total += n.data
+  }
+  const now = performance.now()
+  let keep = 0
+  const limit = Math.min(run.seen.length, total.length)
+  while (keep < limit && run.seen[keep] === total[keep]) keep++
+  run.marks = run.marks.filter((m) => m.from < keep && now - m.t < FRESH_MS).map((m) => ({ ...m, to: Math.min(m.to, keep) }))
+  if (total.length > keep) run.marks.push({ from: keep, to: total.length, t: now })
+  run.seen = total
+  const jobs = []
+  for (const m of run.marks) {
+    for (const [node, start] of nodes) {
+      const a = Math.max(m.from, start) - start
+      const b = Math.min(m.to, start + node.data.length) - start
+      if (b > a) jobs.push({ node, a, b, age: now - m.t })
+    }
+  }
+  jobs.sort((x, y) => (x.node === y.node ? y.a - x.a : 0))
+  for (const j of jobs) {
+    const span = h('span', { class: 'tok' })
+    span.style.animationDelay = `-${Math.round(j.age)}ms`
+    const range = document.createRange()
+    range.setStart(j.node, j.a)
+    range.setEnd(j.node, j.b)
+    range.surroundContents(span)
+  }
+}
+
+function draw(run, live) {
+  const parts = [render(run.text)]
+  if (live && run.text) parts.push(h('span', { class: 'chat-cursor' }))
+  run.body.replaceChildren(...parts)
+  if (live && fx()) freshen(run.body, run)
 }
 
 let frame = 0
@@ -87,7 +139,7 @@ function paint() {
   if (frame || !current) return
   frame = requestAnimationFrame(() => {
     frame = 0
-    if (current) follow(() => current.body.replaceChildren(render(current.text)))
+    if (current) follow(() => draw(current, true))
   })
 }
 
@@ -115,7 +167,8 @@ async function ask() {
   }
   messages.push(...history.slice(-12))
   const id = ++reqId
-  current = { id, text: '', body: addMessage('assistant') }
+  current = { id, text: '', body: addMessage('assistant'), seen: '', marks: [] }
+  current.body.append(dots())
   setBusy(true)
   try {
     await invoke('ai_chat', { id, endpoint: endpoint(), messages })
@@ -123,7 +176,12 @@ async function ask() {
     follow(() => current.body.append(h('div', { class: 'chat-error' }, String(e))))
   }
   if (frame) cancelAnimationFrame(frame), (frame = 0)
-  follow(() => current.body.replaceChildren(render(current.text), ...[...current.body.querySelectorAll('.chat-error')]))
+  const errors = [...current.body.querySelectorAll('.chat-error')]
+  follow(() => {
+    if (current.text) draw(current, false)
+    else current.body.replaceChildren()
+    current.body.append(...errors)
+  })
   if (current.text) history.push({ role: 'assistant', content: current.text })
   current = null
   setBusy(false)

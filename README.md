@@ -27,7 +27,7 @@ On machines with little free memory clangd stays off unless you turn it on in Se
 
 You get the things you'd expect from an IDE: CMake projects with Debug and Release builds, a real debugger with breakpoints and watches, a terminal, Git, and code navigation and refactoring through clangd. Folders without a CMakeLists.txt work too, it just compiles the file you have open.
 
-There's an optional AI chat too. Connect Ollama, LM Studio, llama.cpp or an online service in Settings > AI, turn the chat on, and it opens with Alt+8. Nothing runs and nothing is sent anywhere until you do that.
+There's an optional AI chat too. Connect Ollama, LM Studio, llama.cpp or an online service in Settings > AI, turn the chat on, and it opens in a column on the right with Alt+8. Nothing runs and nothing is sent anywhere until you do that.
 
 Themes and colors are all yours to change in Settings, along with fonts, spacing and the small animations.
 

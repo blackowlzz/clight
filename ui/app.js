@@ -68,7 +68,7 @@ async function loadTerm() {
 }
 
 const LEFT = { project: 'Project', structure: 'Structure', git: 'Commit' }
-const BOTTOM = { build: 'Build', run: 'Run', debug: 'Debug', problems: 'Problems', find: 'Find', terminal: 'Terminal', chat: 'AI Chat' }
+const BOTTOM = { build: 'Build', run: 'Run', debug: 'Debug', problems: 'Problems', find: 'Find', terminal: 'Terminal' }
 
 function showLeft(name, force = false) {
   const same = state.left === name
@@ -93,7 +93,6 @@ function showLeft(name, force = false) {
 }
 
 async function showBottom(name, force = true) {
-  if (name === 'chat' && !settings.aiChat) return
   if (state.bottom === name && !force) {
     hideBottom()
     return
@@ -123,12 +122,6 @@ async function showBottom(name, force = true) {
     if (state.bottom === 'terminal') {
       acts.append(t.panelActions())
       t.shown()
-    }
-  } else if (name === 'chat') {
-    const c = await loadChat()
-    if (state.bottom === 'chat') {
-      acts.append(c.panelActions())
-      c.shown()
     }
   } else if (name === 'problems') refreshProblems()
   saveSession()
@@ -992,10 +985,24 @@ async function gotoLine() {
 
 const openSettings = (section) => settingsPage.open(typeof section === 'string' ? section : undefined)
 app.openSettings = openSettings
+async function toggleChat(on = state.right !== 'chat') {
+  if (on && !settings.aiChat) return toast('Turn on AI chat in Settings > AI')
+  state.right = on ? 'chat' : null
+  $('right').hidden = $('right-rz').hidden = !on
+  $('rail-chat').classList.toggle('on', on)
+  store('chatOpen', on)
+  if (!on) return ed.focus()
+  const c = await loadChat()
+  $('right-actions').replaceChildren(c.panelActions())
+  c.shown()
+}
+app.toggleChat = toggleChat
 app.syncChat = () => {
   $('rail-chat').hidden = !settings.aiChat
-  if (!settings.aiChat && state.bottom === 'chat') hideBottom()
+  if (!settings.aiChat && state.right) toggleChat(false)
 }
+$('rail-chat').addEventListener('click', () => toggleChat())
+$('right-x').addEventListener('click', () => toggleChat(false))
 
 function quickTheme() {
   palette({
@@ -1102,7 +1109,7 @@ reg('tw-run', 'Run', 'A-4', () => showBottom('run', false))
 reg('tw-debug', 'Debug', 'A-5', () => showBottom('debug', false))
 reg('tw-problems', 'Problems', 'A-6', () => showBottom('problems', false))
 reg('tw-terminal', 'Terminal', 'A-F12', () => showBottom('terminal', false))
-reg('tw-chat', 'AI Chat', 'A-8', () => (settings.aiChat ? showBottom('chat', false) : toast('Turn on AI chat in Settings > AI')))
+reg('tw-chat', 'AI Chat', 'A-8', () => toggleChat())
 reg('switch-theme', 'Switch Theme…', 'C-`', quickTheme)
 
 function keymap() {
@@ -1349,13 +1356,14 @@ function drag(el, varName, min, max, getBase) {
     const up = () => {
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', up)
-      store('layout', { side: root.style.getPropertyValue('--side'), panel: root.style.getPropertyValue('--panel') })
+      store('layout', { side: root.style.getPropertyValue('--side'), panel: root.style.getPropertyValue('--panel'), right: root.style.getPropertyValue('--right') })
     }
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', up)
   })
 }
 drag($('side-rz'), '--side', 140, () => innerWidth * 0.5, (e) => e.clientX)
+drag($('right-rz'), '--right', 280, () => innerWidth * 0.6, (e) => innerWidth - e.clientX - 5)
 drag($('panel-rz'), '--panel', 90, () => innerHeight - 180, (e) => innerHeight - 22 - e.clientY)
 
 if (SEP === '\\') for (const el of document.querySelectorAll('#debug, [data-bottom="debug"]')) el.hidden = true
@@ -1365,6 +1373,7 @@ async function start() {
   const layout = load('layout', null)
   if (layout?.side) root.style.setProperty('--side', layout.side)
   if (layout?.panel) root.style.setProperty('--panel', layout.panel)
+  if (layout?.right) root.style.setProperty('--right', layout.right)
   await document.fonts.load('13px "JetBrains Mono Variable"').catch(() => {})
   state.sys = await invoke('sys_info')
   applyLook()
@@ -1382,6 +1391,7 @@ async function start() {
   update.startup()
   guard(tools.startup())
   app.syncChat()
+  if (settings.aiChat && load('chatOpen', false)) toggleChat(true)
   ai.startup()
 }
 
