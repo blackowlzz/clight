@@ -1,6 +1,6 @@
 [package]
 name = "clight"
-version = "0.1.1"
+version = "0.1.2"
 description = "A C/C++ IDE that runs on very low-end machines"
 edition = "2021"
 
@@ -16,6 +16,10 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = "2"
 vte = "0.15.0"
 unicode-width = "0.2.3"
+reqwest = { version = "0.13", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+sha2 = "0.10"
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [features]
 selftest = []

@@ -378,12 +378,15 @@ dependencies = [
 
 [[package]]
 name = "clight"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
+ "reqwest",
  "ropey",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
@@ -391,6 +394,7 @@ dependencies = [
  "unicode-width",
  "vte",
  "winreg",
+ "zip",
 ]
 
 [[package]]
@@ -5401,6 +5405,7 @@ checksum = "0700e6c427aff64acdbf02e85fbfd946c2ee12319d1af013092f3a2178914ff8"
 dependencies = [
  "constant_time_eq",
  "crc32fast",
+ "flate2",
  "getrandom 0.4.3",
  "indexmap 2.14.2",
  "libc",

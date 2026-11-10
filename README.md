@@ -19,6 +19,8 @@ CMake and a compiler. Everything else is optional and only turns on if it's inst
 - `git` for the commit panel
 - `clang-format` for formatting
 
+On Windows clight offers to download clangd, clang-format and the rest for you. You can also find it under Help > Download clangd utils.
+
 On machines with little free memory clangd stays off unless you turn it on in Settings.
 
 ## What it does

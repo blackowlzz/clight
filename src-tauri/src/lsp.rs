@@ -81,34 +81,6 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// The LLVM and MSYS2 installers don't put clangd on the Path by default.
-fn clangd_program() -> PathBuf {
-    if cfg!(windows) {
-        let on_path = std::env::var_os("PATH")
-            .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("clangd.exe").is_file()));
-        if !on_path {
-            let llvm = ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
-                .iter()
-                .filter_map(std::env::var_os)
-                .flat_map(|d| {
-                    let d = PathBuf::from(d);
-                    [d.join(r"LLVM\bin"), d.join(r"Programs\LLVM\bin")]
-                });
-            let msys2 = ["ucrt64", "clang64", "mingw64"]
-                .iter()
-                .map(|e| Path::new(r"C:\msys64").join(e).join("bin"));
-            if let Some(found) = llvm
-                .chain(msys2)
-                .map(|d| d.join("clangd.exe"))
-                .find(|p| p.is_file())
-            {
-                return found;
-            }
-        }
-    }
-    PathBuf::from("clangd")
-}
-
 pub fn uri_from_path(p: &Path) -> String {
     let mut out = String::from("file://");
     let s = p.to_string_lossy().replace('\\', "/");
@@ -161,7 +133,7 @@ impl Lsp {
         build_dir: &Path,
         index: bool,
     ) -> Result<Arc<Lsp>, String> {
-        let mut cmd = Command::new(clangd_program());
+        let mut cmd = Command::new("clangd");
         clean_env(&mut cmd);
         cmd.arg(format!("--background-index={index}"));
         cmd.args([
@@ -174,6 +146,13 @@ impl Lsp {
         ]);
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         cmd.arg("--malloc-trim");
+        let mingw = cfg!(windows)
+            .then(|| crate::tools::find_on_path("gcc.exe"))
+            .flatten();
+        if let Some(dir) = &mingw {
+            let dir = dir.to_string_lossy().replace('\\', "/");
+            cmd.arg(format!("--query-driver={dir}/*"));
+        }
         if build_dir.join("compile_commands.json").exists() {
             cmd.arg(format!("--compile-commands-dir={}", build_dir.display()));
         }
@@ -208,6 +187,9 @@ impl Lsp {
             json!({
                 "processId": std::process::id(),
                 "rootUri": uri_from_path(root),
+                "initializationOptions": {
+                    "fallbackFlags": if mingw.is_some() { json!(["--target=x86_64-w64-mingw32"]) } else { json!([]) },
+                },
                 "capabilities": {
                     "textDocument": {
                         "completion": { "completionItem": { "snippetSupport": false } },

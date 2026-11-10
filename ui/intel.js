@@ -1,5 +1,5 @@
 import * as ed from './editor.js'
-import { $, h, invoke, listen, app, state, settings, reg, toast, guard, promptBox, palette, showMenu, basename } from './core.js'
+import { $, h, invoke, listen, app, state, settings, reg, toast, guard, promptBox, palette, showMenu, basename, SEP } from './core.js'
 
 const compEl = $('completion'), hoverEl = $('hover'), sigEl = $('sig')
 
@@ -29,7 +29,7 @@ export async function restartIntel() {
   } catch (e) {
     setLsp('error')
     console.warn(e)
-    if (String(e).includes('not installed') && !warnedNoClangd) {
+    if (String(e).includes('not installed') && !warnedNoClangd && SEP !== '\\') {
       warnedNoClangd = true
       toast('clangd not found. Errors come from the compiler until you install LLVM')
     }

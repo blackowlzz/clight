@@ -14,6 +14,7 @@ mod runner;
 mod syntax;
 #[cfg(unix)]
 mod term;
+mod tools;
 mod update;
 
 use doc::{Cmd, Doc, View};
@@ -216,6 +217,21 @@ async fn update_install(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
     update::install(&app).await?;
     stop_children(&state);
     app.restart()
+}
+
+#[tauri::command]
+fn tools_status() -> Vec<tools::Status> {
+    tools::status()
+}
+
+#[tauri::command]
+async fn tools_install(ids: Vec<String>, app: AppHandle) -> Res<Vec<tools::Failure>> {
+    tools::install(&app, &ids).await
+}
+
+#[tauri::command]
+fn tool_available(exe: String) -> bool {
+    tools::find_on_path(&exe).is_some()
 }
 
 #[derive(Serialize)]
@@ -1215,6 +1231,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .setup(|app| {
+            tools::extend_path(app.handle());
+            Ok(())
+        })
         .manage(AppState {
             docs: Mutex::new(HashMap::new()),
             next_doc: AtomicU32::new(1),
@@ -1259,6 +1279,9 @@ fn main() {
             #[cfg(any(unix, windows))]
             install_cli,
             syntax_check,
+            tools_status,
+            tools_install,
+            tool_available,
             clipboard_read,
             clipboard_write,
             doc_format,

@@ -1,5 +1,5 @@
 import * as ed from './editor.js'
-import { $, h, invoke, listen, app, state, store, load, reg, toast, guard, modal, join, activeTab, showMenu } from './core.js'
+import { $, h, invoke, listen, app, state, store, load, reg, toast, guard, modal, join, activeTab, showMenu, SEP } from './core.js'
 
 const MAX_OUT = 3000
 const DIAG_RE = /^(.+?):(\d+):(?:(\d+):)?\s+(fatal error|error|warning|note):\s*(.*)/
@@ -238,6 +238,8 @@ export async function configure() {
   const hadDb = await invoke('path_exists', { path: join(state.build, 'compile_commands.json') })
   await invoke('cmake_prepare', { build: state.build })
   const extra = splitArgs(runConfig().cmake)
+  const fresh = !(await invoke('path_exists', { path: join(state.build, 'CMakeCache.txt') }))
+  if (SEP === '\\' && fresh && !extra.includes('-G') && (await invoke('tool_available', { exe: 'ninja.exe' })) && (await invoke('tool_available', { exe: 'gcc.exe' }))) extra.push('-G', 'Ninja')
   const code = await runTask(buildOut, 'cmake configure', 'cmake', ['-S', state.root, '-B', state.build, `-DCMAKE_BUILD_TYPE=${state.profile}`, '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', ...extra], state.root)
   if (code !== 0) return false
   await refreshTargets()

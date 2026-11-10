@@ -327,6 +327,18 @@ function edgeScroll() {
   }
 }
 
+const lastDown = { time: -Infinity, x: 0, y: 0, clicks: 0 }
+
+// WebView2 always reports detail 0 on pointer events, so the count has to be ours.
+function countClicks(e) {
+  const near = Math.abs(e.clientX - lastDown.x) <= 4 && Math.abs(e.clientY - lastDown.y) <= 4
+  lastDown.clicks = near && e.timeStamp - lastDown.time <= 500 ? lastDown.clicks + 1 : 1
+  lastDown.time = e.timeStamp
+  lastDown.x = e.clientX
+  lastDown.y = e.clientY
+  return lastDown.clicks
+}
+
 scroll.addEventListener('pointerdown', (e) => {
   hook.pointer()
   if (e.button !== 0) return
@@ -340,8 +352,9 @@ scroll.addEventListener('pointerdown', (e) => {
     else quiet({ t: 'toggle_breakpoint', row: c.line })
     return
   }
-  if (e.detail === 2) send({ t: 'word', ...c })
-  else if (e.detail >= 3) send({ t: 'select_line', line: c.line })
+  const clicks = countClicks(e)
+  if (clicks === 2) send({ t: 'word', ...c })
+  else if (clicks >= 3) send({ t: 'select_line', line: c.line })
   else {
     send({ t: 'click', ...c, ext: e.shiftKey })
     if (e.ctrlKey) {

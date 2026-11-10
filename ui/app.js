@@ -4,6 +4,7 @@ import * as intel from './intel.js'
 import * as build from './build.js'
 import * as git from './git.js'
 import * as update from './update.js'
+import * as tools from './tools.js'
 import * as theme from './theme.js'
 import * as settingsPage from './settings.js'
 import { renderHome, tile } from './welcome.js'
@@ -1101,7 +1102,7 @@ const MENUS = {
   Build: ['build', 'clean', 'reload-cmake', 'ctest', '-', 'run-config'],
   Run: ['run', 'debug', 'stop', '-', 'dbg-resume', 'dbg-over', 'dbg-into', 'dbg-out', 'dbg-cursor', '-', 'toggle-bp', 'dbg-watch'],
   Git: ['commit', 'git-pull', 'git-push', 'git-branch'],
-  Help: ['keymap', 'actions', '-', 'install-cli', 'check-updates', 'about'],
+  Help: ['keymap', 'actions', '-', ...(SEP === '\\' ? ['download-tools'] : []), 'install-cli', 'check-updates', 'about'],
 }
 
 function renderMenus() {
@@ -1346,6 +1347,7 @@ async function start() {
   }
   await invoke('app_ready')
   update.startup()
+  guard(tools.startup())
 }
 
 start()
