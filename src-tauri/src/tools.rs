@@ -14,6 +14,15 @@ use zip::ZipArchive;
 enum Kind {
     Zip,
     SelfExtracting,
+    TarGz,
+    File,
+}
+
+#[derive(Clone, Copy)]
+enum Os {
+    All,
+    Windows,
+    Linux,
 }
 
 struct Tool {
@@ -26,10 +35,12 @@ struct Tool {
     bin: &'static str,
     exe: &'static str,
     kind: Kind,
+    group: &'static str,
+    os: Os,
     recommended: bool,
 }
 
-static WINDOWS: [Tool; 6] = [
+static TOOLS: [Tool; 9] = [
     Tool {
         id: "clangd",
         title: "clangd",
@@ -40,6 +51,8 @@ static WINDOWS: [Tool; 6] = [
         bin: "clangd_23.1.0/bin",
         exe: "clangd.exe",
         kind: Kind::Zip,
+        group: "dev",
+        os: Os::Windows,
         recommended: true,
     },
     Tool {
@@ -52,6 +65,8 @@ static WINDOWS: [Tool; 6] = [
         bin: "clang_format/data/bin",
         exe: "clang-format.exe",
         kind: Kind::Zip,
+        group: "dev",
+        os: Os::Windows,
         recommended: true,
     },
     Tool {
@@ -64,6 +79,8 @@ static WINDOWS: [Tool; 6] = [
         bin: "w64devkit/bin",
         exe: "gcc.exe",
         kind: Kind::SelfExtracting,
+        group: "dev",
+        os: Os::Windows,
         recommended: true,
     },
     Tool {
@@ -76,6 +93,8 @@ static WINDOWS: [Tool; 6] = [
         bin: "cmake-4.4.5-windows-x86_64/bin",
         exe: "cmake.exe",
         kind: Kind::Zip,
+        group: "dev",
+        os: Os::Windows,
         recommended: true,
     },
     Tool {
@@ -88,6 +107,8 @@ static WINDOWS: [Tool; 6] = [
         bin: "",
         exe: "ninja.exe",
         kind: Kind::Zip,
+        group: "dev",
+        os: Os::Windows,
         recommended: true,
     },
     Tool {
@@ -100,17 +121,85 @@ static WINDOWS: [Tool; 6] = [
         bin: "cmd",
         exe: "git.exe",
         kind: Kind::Zip,
+        group: "dev",
+        os: Os::Windows,
+        recommended: false,
+    },
+    Tool {
+        id: "ai-engine",
+        title: "AI engine",
+        detail: "llama.cpp, runs the small AI on your CPU",
+        size: 24_931_485,
+        url: "https://github.com/ggml-org/llama.cpp/releases/download/b12246/llama-b12246-bin-win-cpu-x64.zip",
+        sha256: "4ff558826078209d9502037f1bb751fa229ecff246ec9362ec2632d08b2948b4",
+        bin: "",
+        exe: "llama-server.exe",
+        kind: Kind::Zip,
+        group: "ai",
+        os: Os::Windows,
+        recommended: false,
+    },
+    Tool {
+        id: "ai-engine",
+        title: "AI engine",
+        detail: "llama.cpp, runs the small AI on your CPU",
+        size: 23_158_204,
+        url: "https://github.com/ggml-org/llama.cpp/releases/download/b12246/llama-b12246-bin-ubuntu-x64.tar.gz",
+        sha256: "791f48a17841ddcce8a8552dfbbac108fda72389f3dd81508691468e8f114c89",
+        bin: "llama-b12246",
+        exe: "llama-server",
+        kind: Kind::TarGz,
+        group: "ai",
+        os: Os::Linux,
+        recommended: false,
+    },
+    Tool {
+        id: "ai-model",
+        title: "Small AI model",
+        detail: "Qwen2.5-Coder 0.5B, a small model for code",
+        size: 397_808_288,
+        url: "https://huggingface.co/bartowski/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-0.5B-Instruct-Q4_K_M.gguf",
+        sha256: "0128e77564e43d40682f82d7ebe8a9abdf0c24c8f55fa85629f8cc156b1b6560",
+        bin: "",
+        exe: "model.gguf",
+        kind: Kind::File,
+        group: "ai",
+        os: Os::All,
         recommended: false,
     },
 ];
 
 static BUSY: AtomicBool = AtomicBool::new(false);
 
-fn catalog() -> &'static [Tool] {
-    if cfg!(windows) || cfg!(feature = "selftest") {
-        &WINDOWS
-    } else {
-        &[]
+fn applies(t: &Tool) -> bool {
+    match t.os {
+        Os::All => true,
+        Os::Windows => cfg!(windows) || (cfg!(feature = "selftest") && t.group == "dev"),
+        Os::Linux => cfg!(target_os = "linux"),
+    }
+}
+
+fn catalog() -> Vec<&'static Tool> {
+    TOOLS.iter().filter(|t| applies(t)).collect()
+}
+
+fn find(id: &str) -> Option<&'static Tool> {
+    catalog().into_iter().find(|t| t.id == id)
+}
+
+/// Where a tool that clight downloaded itself lives, when it is there.
+pub fn tool_path(app: &AppHandle, id: &str) -> Option<PathBuf> {
+    let t = find(id)?;
+    let p = tools_dir(app).ok()?.join(t.id).join(t.bin).join(t.exe);
+    p.is_file().then_some(p)
+}
+
+pub fn remove(app: &AppHandle, id: &str) {
+    if let Ok(dir) = tools_dir(app) {
+        let _ = fs::remove_dir_all(dir.join(id));
+        if id == "ai-engine" {
+            let _ = fs::remove_file(dir.join("ai-engine.log"));
+        }
     }
 }
 
@@ -140,7 +229,7 @@ fn usual_install_dirs() -> Vec<PathBuf> {
 
 /// Lets every program clight starts find the tools, without touching the user's Path.
 pub fn extend_path(app: &AppHandle) {
-    if catalog().is_empty() {
+    if !catalog().iter().any(|t| t.group == "dev") {
         return;
     }
     let current = std::env::var_os("PATH").unwrap_or_default();
@@ -148,7 +237,12 @@ pub fn extend_path(app: &AppHandle) {
     let before = dirs.len();
     let mut extra = usual_install_dirs();
     if let Ok(tools) = tools_dir(app) {
-        extra.extend(catalog().iter().map(|t| tools.join(t.id).join(t.bin)));
+        extra.extend(
+            catalog()
+                .iter()
+                .filter(|t| t.group == "dev")
+                .map(|t| tools.join(t.id).join(t.bin)),
+        );
     }
     for d in extra {
         if d.is_dir() && !dirs.contains(&d) {
@@ -170,9 +264,10 @@ pub struct Status {
     size: u64,
     recommended: bool,
     installed: bool,
+    group: &'static str,
 }
 
-pub fn status() -> Vec<Status> {
+pub fn status(app: &AppHandle) -> Vec<Status> {
     catalog()
         .iter()
         .map(|t| Status {
@@ -181,7 +276,12 @@ pub fn status() -> Vec<Status> {
             detail: t.detail,
             size: t.size,
             recommended: t.recommended,
-            installed: find_on_path(t.exe).is_some(),
+            installed: if t.group == "ai" {
+                tool_path(app, t.id).is_some()
+            } else {
+                find_on_path(t.exe).is_some()
+            },
+            group: t.group,
         })
         .collect()
 }
@@ -259,6 +359,21 @@ fn unpack(kind: Kind, archive: &Path, into: &Path) -> Result<(), String> {
     fs::create_dir_all(into).map_err(|e| e.to_string())?;
     match kind {
         Kind::Zip => unzip(archive, into),
+        Kind::TarGz => {
+            let status = Command::new("tar")
+                .arg("-xzf")
+                .arg(archive)
+                .arg("-C")
+                .arg(into)
+                .status()
+                .map_err(|e| format!("tar: {e}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err("The archive couldn't be unpacked".into())
+            }
+        }
+        Kind::File => Err("A single file needs no unpacking".into()),
         Kind::SelfExtracting => {
             let mut cmd = Command::new(archive);
             clean_env(&mut cmd);
@@ -282,6 +397,8 @@ async fn install_one(app: &AppHandle, tool: &'static Tool) -> Result<(), String>
     let ext = match tool.kind {
         Kind::Zip => "zip",
         Kind::SelfExtracting => "exe",
+        Kind::TarGz => "tgz",
+        Kind::File => "bin",
     };
     let archive = dir.join(format!("{}.download.{ext}", tool.id));
     let fresh = dir.join(format!("{}.new", tool.id));
@@ -290,9 +407,15 @@ async fn install_one(app: &AppHandle, tool: &'static Tool) -> Result<(), String>
     let result = async {
         fetch(app, tool, &archive).await?;
         let (a, f, kind) = (archive.clone(), fresh.clone(), tool.kind);
-        tauri::async_runtime::spawn_blocking(move || unpack(kind, &a, &f))
-            .await
-            .map_err(|e| e.to_string())??;
+        if matches!(kind, Kind::File) {
+            let place = fresh.join(tool.bin);
+            fs::create_dir_all(&place).map_err(|e| e.to_string())?;
+            fs::rename(&archive, place.join(tool.exe)).map_err(|e| e.to_string())?;
+        } else {
+            tauri::async_runtime::spawn_blocking(move || unpack(kind, &a, &f))
+                .await
+                .map_err(|e| e.to_string())??;
+        }
         if !fresh.join(tool.bin).join(tool.exe).is_file() {
             return Err(format!("{} is missing from the download", tool.exe));
         }
@@ -318,7 +441,10 @@ pub async fn install(app: &AppHandle, ids: &[String]) -> Result<Vec<Failure>, St
         return Err("Already downloading".into());
     }
     let mut failures = vec![];
-    for tool in catalog().iter().filter(|t| ids.iter().any(|i| i == t.id)) {
+    for tool in catalog()
+        .into_iter()
+        .filter(|t| ids.iter().any(|i| i == t.id))
+    {
         if let Err(error) = install_one(app, tool).await {
             failures.push(Failure {
                 title: tool.title,
@@ -339,11 +465,36 @@ mod tests {
 
     #[test]
     fn the_catalog_is_well_formed() {
-        for t in &WINDOWS {
+        for t in &TOOLS {
             assert_eq!(t.sha256.len(), 64, "{}", t.id);
             assert!(t.url.starts_with("https://"), "{}", t.id);
-            assert!(t.exe.ends_with(".exe"), "{}", t.id);
+            if matches!(t.os, Os::Windows) {
+                assert!(t.exe.ends_with(".exe"), "{}", t.id);
+            }
         }
+    }
+
+    #[test]
+    fn a_tar_archive_is_unpacked_into_its_folder() {
+        let base = std::env::temp_dir().join(format!("clight-tar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("src/pkg")).unwrap();
+        fs::write(base.join("src/pkg/tool"), "x").unwrap();
+        let archive = base.join("a.tgz");
+        let made = Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(base.join("src"))
+            .arg("pkg")
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let out = base.join("out");
+        unpack(Kind::TarGz, &archive, &out).unwrap();
+        assert_eq!(fs::read(out.join("pkg/tool")).unwrap(), b"x");
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

@@ -50,7 +50,7 @@ async function install(ids, close) {
 
 async function openMenu() {
   if (busy) return toast('Already downloading')
-  const list = await invoke('tools_status')
+  const list = (await invoke('tools_status')).filter((t) => t.group === 'dev')
   list.forEach((t) => titles.set(t.id, t.title))
   const boxes = new Map()
   const total = h('span', { class: 'muted' })
@@ -91,6 +91,6 @@ listen('tools-progress', (e) => {
 reg('download-tools', `${LABEL}…`, null, openMenu, { hidden: SEP !== '\\' })
 
 export async function startup() {
-  const list = await invoke('tools_status')
+  const list = (await invoke('tools_status')).filter((t) => t.group === 'dev')
   if (list.some((t) => t.recommended && !t.installed) && Date.now() - load(DISMISSED, 0) > REMIND_MS) offerNote()
 }

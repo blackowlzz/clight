@@ -67,6 +67,7 @@ export const settings = {
   termBar: load('termBar', false),
   ghost: load('ghost', true),
   aiChat: load('aiChat', false),
+  aiProvider: load('aiProvider', 'builtin'),
   aiUrl: load('aiUrl', 'http://127.0.0.1:11434/v1'),
   aiModel: load('aiModel', ''),
   aiKey: load('aiKey', ''),

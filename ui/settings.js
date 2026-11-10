@@ -2,8 +2,9 @@ import * as theme from './theme.js'
 import { h, app, state, settings, store, toast, modal, promptBox, seg } from './core.js'
 import * as intel from './intel.js'
 import { closeNote } from './notify.js'
+import * as ai from './ai.js'
 import { PRESETS } from './ai.js'
-import { invoke } from './core.js'
+import { invoke, guard } from './core.js'
 
 const SECTIONS = [
   ['theme', 'Themes'],
@@ -268,10 +269,44 @@ function editorPage(rerender) {
   )
 }
 
-function aiPage() {
+function aiPage(rerender) {
   const save = (key, v) => {
     settings[key] = v
     store(key, v)
+  }
+  const chatRow = row('AI chat', 'A chat in a column on the right (Alt+8)', seg([[true, 'On'], [false, 'Off']], settings.aiChat, (v) => {
+    save('aiChat', v)
+    if (v) closeNote('ai')
+    app.syncChat?.()
+  }))
+  const provider = row('Assistant', 'The small built-in AI needs no setup. Your own server is for the advanced chat', seg([['builtin', 'Small built-in AI'], ['custom', 'Advanced: my own server']], settings.aiProvider, (v) => {
+    save('aiProvider', v)
+    ai.refresh().then(() => rerender?.())
+  }))
+  if (ai.isBuiltin()) {
+    const box = h('span', { class: 'ai-control' })
+    const paint = () => {
+      if (!box.isConnected && box.dataset.ready) return window.removeEventListener('ai-changed', paint)
+      box.dataset.ready = '1'
+      box.replaceChildren(
+        ai.installing()
+          ? h('span', { class: 'muted' }, 'Installing…')
+          : ai.ready()
+            ? h('span', {}, h('span', { class: 'muted' }, 'Installed  '), h('button', { onclick: () => guard(ai.removeBuiltin()) }, 'Remove'))
+            : h('button', { class: 'primary', onclick: () => guard(ai.installBuiltin()) }, `Install (${ai.SMALL_AI_SIZE})`),
+      )
+    }
+    window.addEventListener('ai-changed', paint)
+    paint()
+    ai.refresh().then(paint)
+    return h(
+      'div',
+      {},
+      chatRow,
+      provider,
+      row('Small built-in AI', 'Qwen2.5-Coder 0.5B. It installs and starts by itself, and stops when you are not using it. It is small and quick on weak laptops, but it can make mistakes.', box),
+      h('p', { class: 'muted', style: 'padding:6px 0' }, 'It runs on your computer. Your code is not sent anywhere.'),
+    )
   }
   const field = (key, placeholder, type = 'text', extra = {}) =>
     h('input', { class: 'wide', type, value: settings[key], placeholder, spellcheck: 'false', autocomplete: 'off', oninput: (e) => save(key, e.target.value.trim()), ...extra })
@@ -306,11 +341,8 @@ function aiPage() {
   return h(
     'div',
     {},
-    row('AI chat', 'A chat panel like the one in VS Code, in the bottom panel (Alt+8)', seg([[true, 'On'], [false, 'Off']], settings.aiChat, (v) => {
-      save('aiChat', v)
-      if (v) closeNote('ai')
-      app.syncChat?.()
-    })),
+    chatRow,
+    provider,
     row('Server', 'Ollama, LM Studio and llama.cpp run on your own computer', presets),
     row('Address', 'Any server that speaks the OpenAI API', urlInput),
     row('Model', 'Test the connection to see the names', h('span', {}, modelInput, models)),

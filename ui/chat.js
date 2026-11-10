@@ -1,5 +1,6 @@
 import * as ed from './editor.js'
 import { $, h, invoke, listen, app, state, toast, guard } from './core.js'
+import * as ai from './ai.js'
 import { endpoint, ready } from './ai.js'
 
 const SYSTEM = 'You are a helpful assistant for C and C++ programmers, inside the clight editor. Be brief and concrete. Put code in fenced code blocks.'
@@ -8,8 +9,9 @@ const view = $('v-chat')
 const log = h('div', { class: 'chat-log' })
 const input = h('textarea', { class: 'chat-input', rows: '2', spellcheck: 'false', placeholder: 'Ask about your code…  Enter sends, Shift+Enter adds a line' })
 const sendBtn = h('button', { class: 'primary' }, 'Send')
+const note = h('div', { class: 'chat-note' })
 const withFile = h('input', { type: 'checkbox', checked: true })
-view.replaceChildren(log, h('div', { class: 'chat-composer' }, input, h('div', { class: 'chat-bar' }, h('label', { class: 'chat-opt' }, withFile, 'Include the open file'), h('span', { class: 'grow' }), sendBtn)))
+view.replaceChildren(log, h('div', { class: 'chat-composer' }, note, input, h('div', { class: 'chat-bar' }, h('label', { class: 'chat-opt' }, withFile, 'Include the open file'), h('span', { class: 'grow' }), sendBtn)))
 
 let history = []
 let busy = false
@@ -67,12 +69,28 @@ function addMessage(role, text = '') {
 
 function welcome() {
   log.replaceChildren()
-  const connected = ready()
-  const box = h('div', { class: 'chat-welcome' },
-    h('b', {}, connected ? 'Ask about your code' : 'Connect a model to start'),
-    h('span', { class: 'muted' }, connected ? `Using ${endpoint().model}. Tick “Include the open file” to give it your code.` : 'Add the address of Ollama, LM Studio, llama.cpp or an online service.'),
-    connected ? null : h('button', { class: 'primary', onclick: () => app.openSettings?.('ai') }, 'Open AI settings'),
-  )
+  note.textContent = ai.isBuiltin() && ready() ? 'Small built-in AI: quick, but it can make mistakes. Check what it writes.' : ''
+  note.hidden = !note.textContent
+  let box
+  if (ai.isBuiltin() && !ready()) {
+    box = h('div', { class: 'chat-welcome' },
+      h('b', {}, 'A small AI for your code'),
+      h('span', { class: 'muted' }, 'It runs on your computer and starts by itself, with nothing to set up. It is a small model (Qwen2.5-Coder 0.5B), so it can make mistakes.'),
+      h('button', { class: 'primary', disabled: ai.installing(), onclick: () => guard(ai.installBuiltin()) }, ai.installing() ? 'Installing…' : `Install the small AI (${ai.SMALL_AI_SIZE})`),
+      h('button', { class: 'plain', onclick: () => app.openSettings?.('ai') }, 'Use my own server instead'),
+    )
+  } else if (ready()) {
+    box = h('div', { class: 'chat-welcome' },
+      h('b', {}, 'Ask about your code'),
+      h('span', { class: 'muted' }, (ai.isBuiltin() ? 'Using the small built-in AI. It is a small model and can make mistakes.' : `Using ${endpoint().model}.`) + ' Tick “Include the open file” to give it your code.'),
+    )
+  } else {
+    box = h('div', { class: 'chat-welcome' },
+      h('b', {}, 'Connect a model to start'),
+      h('span', { class: 'muted' }, 'Add the address of Ollama, LM Studio, llama.cpp or an online service.'),
+      h('button', { class: 'primary', onclick: () => app.openSettings?.('ai') }, 'Open AI settings'),
+    )
+  }
   log.append(box)
 }
 
@@ -87,7 +105,7 @@ const FRESH_MS = 320
 const fx = () => document.documentElement.dataset.fxUi === 'on'
 
 function dots() {
-  return h('span', { class: 'chat-thinking' }, h('i'), h('i'), h('i'))
+  return h('span', { class: 'chat-thinking' }, h('i'), h('i'), h('i'), h('span', { class: 'chat-status' }))
 }
 
 /** Wraps the text that arrived in the last moments, so it fades in and keeps going across redraws. */
@@ -143,6 +161,17 @@ function paint() {
   })
 }
 
+listen('ai-status', (e) => {
+  if (current && e.payload.id === current.id) {
+    const el = current.body.querySelector('.chat-status')
+    if (el) el.textContent = e.payload.text
+  }
+})
+
+window.addEventListener('ai-changed', () => {
+  if (!history.length && !current) welcome()
+})
+
 listen('ai-chunk', (e) => {
   if (!current || e.payload.id !== current.id) return
   current.text += e.payload.text
@@ -153,8 +182,8 @@ async function ask() {
   const text = input.value.trim()
   if (!text) return
   if (!ready()) {
-    toast('Connect a model first, in Settings > AI')
-    return app.openSettings?.('ai')
+    welcome()
+    return toast(ai.isBuiltin() ? 'Install the small AI first' : 'Connect a model first, in Settings > AI')
   }
   if (!history.length) log.replaceChildren()
   input.value = ''
@@ -205,8 +234,10 @@ function newChat() {
   welcome()
 }
 
-export function shown() {
-  status.textContent = ready() ? endpoint().model : 'not connected'
-  if (!history.length) welcome()
+export async function shown() {
+  await ai.refresh()
+  status.textContent = ready() ? (ai.isBuiltin() ? 'small AI' : endpoint().model) : 'not connected'
+  if (!history.length && !current) welcome()
   input.focus({ preventScroll: true })
+  if (ai.isBuiltin() && ready()) invoke('ai_warm').catch(() => {})
 }

@@ -154,9 +154,17 @@ async fn run(
     messages: &[Message],
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let url = format!("{}/chat/completions", base(&ep.url)?);
+    let builtin = ep.url.trim() == "builtin";
+    let root = if builtin {
+        format!("{}/v1", crate::llama::ensure(app, id).await?)
+    } else {
+        base(&ep.url)?
+    };
+    let url = format!("{root}/chat/completions");
     let mut body = json!({ "messages": messages, "stream": true, "temperature": 0.2 });
-    if !ep.model.trim().is_empty() {
+    if builtin {
+        body["max_tokens"] = json!(1024);
+    } else if !ep.model.trim().is_empty() {
         body["model"] = json!(ep.model.trim());
     }
     let req = authorized(client()?.post(url), &ep.key)
@@ -169,6 +177,9 @@ async fn run(
         return Err(error_text(status, &text));
     }
     let emit = |text: String| {
+        if builtin {
+            crate::llama::touch();
+        }
         let _ = app.emit("ai-chunk", Chunk { id, text });
     };
     let (mut pending, mut raw, mut got_text) = (Vec::<u8>::new(), String::new(), false);

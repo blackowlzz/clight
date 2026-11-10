@@ -9,6 +9,7 @@ mod doc;
 mod format;
 mod git;
 mod lexer;
+mod llama;
 mod lsp;
 mod project;
 mod runner;
@@ -183,6 +184,7 @@ fn install_cli() -> Res<String> {
 
 fn stop_children(state: &AppState) {
     state.runner.kill();
+    llama::stop();
     let terms: Vec<_> = state.terms.lock().unwrap().drain().collect();
     for (id, t) in terms {
         if id == RUN_TERM {
@@ -228,8 +230,25 @@ async fn update_install(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
 }
 
 #[tauri::command]
-fn tools_status() -> Vec<tools::Status> {
-    tools::status()
+fn tools_status(app: AppHandle) -> Vec<tools::Status> {
+    tools::status(&app)
+}
+
+#[tauri::command]
+fn ai_builtin_installed(app: AppHandle) -> bool {
+    llama::installed(&app)
+}
+
+#[tauri::command(async)]
+async fn ai_warm(app: AppHandle) -> Res<()> {
+    llama::ensure(&app, 0).await.map(|_| ())
+}
+
+#[tauri::command(async)]
+fn ai_remove(app: AppHandle) {
+    llama::stop();
+    tools::remove(&app, "ai-engine");
+    tools::remove(&app, "ai-model");
 }
 
 #[tauri::command]
@@ -1454,6 +1473,9 @@ fn main() {
             ai_models,
             doc_context,
             tools_status,
+            ai_builtin_installed,
+            ai_warm,
+            ai_remove,
             tools_install,
             tool_available,
             clipboard_read,
