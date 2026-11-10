@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
 #[cfg(any(windows, test))]
 mod cli;
 #[cfg(unix)]
@@ -687,6 +688,45 @@ fn lsp_complete(id: u32, force: bool, state: State<'_, AppState>) -> Res<Complet
         incomplete,
         items,
     })
+}
+
+#[tauri::command(async)]
+async fn ai_chat(
+    id: u32,
+    endpoint: ai::Endpoint,
+    messages: Vec<ai::Message>,
+    app: AppHandle,
+) -> Res<()> {
+    ai::chat(&app, id, endpoint, messages).await
+}
+
+#[tauri::command]
+fn ai_cancel(id: u32) {
+    ai::cancel(id);
+}
+
+#[tauri::command(async)]
+async fn ai_models(endpoint: ai::Endpoint) -> Res<Vec<String>> {
+    ai::models(endpoint).await
+}
+
+/// The open file as context for the chat: all of it when short, otherwise the part around the caret.
+#[tauri::command]
+fn doc_context(id: u32, max: usize, state: State<AppState>) -> Option<(String, String)> {
+    let docs = state.docs.lock().unwrap();
+    let doc = docs.get(&id)?;
+    let name = doc.path.file_name()?.to_string_lossy().into_owned();
+    let total = doc.rope.len_chars();
+    if total <= max {
+        return Some((name, doc.rope.to_string()));
+    }
+    let (line, _) = doc.cursor_pos();
+    let around = doc
+        .rope
+        .line_to_char(line.min(doc.rope.len_lines().saturating_sub(1)));
+    let from = around.saturating_sub(max / 2);
+    let to = (from + max).min(total);
+    Some((name, doc.rope.slice(from..to).to_string()))
 }
 
 #[derive(Serialize)]
@@ -1409,6 +1449,10 @@ fn main() {
             syntax_check,
             word_complete,
             line_suggest,
+            ai_chat,
+            ai_cancel,
+            ai_models,
+            doc_context,
             tools_status,
             tools_install,
             tool_available,

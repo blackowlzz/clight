@@ -5,6 +5,7 @@ import * as build from './build.js'
 import * as git from './git.js'
 import * as update from './update.js'
 import * as tools from './tools.js'
+import * as ai from './ai.js'
 import { TERMINAL_PASS } from './termkeys.js'
 import * as theme from './theme.js'
 import * as settingsPage from './settings.js'
@@ -54,6 +55,12 @@ async function loadDebug() {
   return debugMod
 }
 
+let chatMod = null
+async function loadChat() {
+  chatMod ??= await import('./chat.js')
+  return chatMod
+}
+
 async function loadTerm() {
   termMod ??= await import('./terminal.js')
   app.term = termMod
@@ -61,7 +68,7 @@ async function loadTerm() {
 }
 
 const LEFT = { project: 'Project', structure: 'Structure', git: 'Commit' }
-const BOTTOM = { build: 'Build', run: 'Run', debug: 'Debug', problems: 'Problems', find: 'Find', terminal: 'Terminal' }
+const BOTTOM = { build: 'Build', run: 'Run', debug: 'Debug', problems: 'Problems', find: 'Find', terminal: 'Terminal', chat: 'AI Chat' }
 
 function showLeft(name, force = false) {
   const same = state.left === name
@@ -86,6 +93,7 @@ function showLeft(name, force = false) {
 }
 
 async function showBottom(name, force = true) {
+  if (name === 'chat' && !settings.aiChat) return
   if (state.bottom === name && !force) {
     hideBottom()
     return
@@ -115,6 +123,12 @@ async function showBottom(name, force = true) {
     if (state.bottom === 'terminal') {
       acts.append(t.panelActions())
       t.shown()
+    }
+  } else if (name === 'chat') {
+    const c = await loadChat()
+    if (state.bottom === 'chat') {
+      acts.append(c.panelActions())
+      c.shown()
     }
   } else if (name === 'problems') refreshProblems()
   saveSession()
@@ -976,7 +990,12 @@ async function gotoLine() {
   }
 }
 
-const openSettings = () => settingsPage.open()
+const openSettings = (section) => settingsPage.open(typeof section === 'string' ? section : undefined)
+app.openSettings = openSettings
+app.syncChat = () => {
+  $('rail-chat').hidden = !settings.aiChat
+  if (!settings.aiChat && state.bottom === 'chat') hideBottom()
+}
 
 function quickTheme() {
   palette({
@@ -1083,6 +1102,7 @@ reg('tw-run', 'Run', 'A-4', () => showBottom('run', false))
 reg('tw-debug', 'Debug', 'A-5', () => showBottom('debug', false))
 reg('tw-problems', 'Problems', 'A-6', () => showBottom('problems', false))
 reg('tw-terminal', 'Terminal', 'A-F12', () => showBottom('terminal', false))
+reg('tw-chat', 'AI Chat', 'A-8', () => (settings.aiChat ? showBottom('chat', false) : toast('Turn on AI chat in Settings > AI')))
 reg('switch-theme', 'Switch Theme…', 'C-`', quickTheme)
 
 function keymap() {
@@ -1109,7 +1129,7 @@ function cycleTab(d) {
 const MENUS = {
   File: ['open-folder', 'new-project', 'new-file', '-', 'save', 'save-all', 'close-tab', '-', 'settings', 'close-project', 'quit'],
   Edit: ['undo', 'redo', '-', 'find', 'replace', 'find-project', '-', 'expand', 'shrink', 'duplicate', 'delete-line', 'move-up', 'move-down', 'join', 'comment', '-', 'select-all'],
-  View: ['tw-project', 'tw-structure', 'tw-git', '-', 'tw-build', 'tw-run', 'tw-debug', 'tw-problems', 'tw-find', 'tw-terminal', '-', 'fold', 'unfold', 'fold-all', 'unfold-all', '-', 'switch-theme', 'fullscreen'],
+  View: ['tw-project', 'tw-structure', 'tw-git', '-', 'tw-build', 'tw-run', 'tw-debug', 'tw-problems', 'tw-find', 'tw-terminal', 'tw-chat', '-', 'fold', 'unfold', 'fold-all', 'unfold-all', '-', 'switch-theme', 'fullscreen'],
   Navigate: ['actions', 'quick-open', 'recent', 'symbols', 'file-symbols', 'goto-line', '-', 'goto-def', 'switch-header', 'usages', 'next-problem', '-', 'back', 'forward', 'next-tab', 'prev-tab'],
   Code: ['code-actions', 'quick-doc', 'rename', 'format'],
   Build: ['build', 'clean', 'reload-cmake', 'ctest', '-', 'run-config'],
@@ -1261,7 +1281,7 @@ document.addEventListener('keydown', async (e) => {
 })
 
 document.addEventListener('contextmenu', (e) => {
-  if (!e.target.closest('input, .out, #hover, textarea.field, .tgrid')) e.preventDefault()
+  if (!e.target.closest('input, .out, #hover, textarea, .chat-log, .tgrid')) e.preventDefault()
 })
 
 $('w-min').addEventListener('click', () => win.minimize())
@@ -1361,6 +1381,8 @@ async function start() {
   await invoke('app_ready')
   update.startup()
   guard(tools.startup())
+  app.syncChat()
+  ai.startup()
 }
 
 start()

@@ -66,6 +66,10 @@ export const settings = {
   updates: load('updates', true),
   termBar: load('termBar', false),
   ghost: load('ghost', true),
+  aiChat: load('aiChat', false),
+  aiUrl: load('aiUrl', 'http://127.0.0.1:11434/v1'),
+  aiModel: load('aiModel', ''),
+  aiKey: load('aiKey', ''),
   formatStyle: load('formatStyle', 'clean'),
 }
 

@@ -1,6 +1,9 @@
 import * as theme from './theme.js'
 import { h, app, state, settings, store, toast, modal, promptBox, seg } from './core.js'
 import * as intel from './intel.js'
+import { closeNote } from './notify.js'
+import { PRESETS } from './ai.js'
+import { invoke } from './core.js'
 
 const SECTIONS = [
   ['theme', 'Themes'],
@@ -8,6 +11,7 @@ const SECTIONS = [
   ['interface', 'Interface'],
   ['editor', 'Editor'],
   ['tools', 'Tools'],
+  ['ai', 'AI'],
 ]
 
 function refresh(rerender) {
@@ -264,6 +268,58 @@ function editorPage(rerender) {
   )
 }
 
+function aiPage() {
+  const save = (key, v) => {
+    settings[key] = v
+    store(key, v)
+  }
+  const field = (key, placeholder, type = 'text', extra = {}) =>
+    h('input', { class: 'wide', type, value: settings[key], placeholder, spellcheck: 'false', autocomplete: 'off', oninput: (e) => save(key, e.target.value.trim()), ...extra })
+  const urlInput = field('aiUrl', 'http://127.0.0.1:11434/v1')
+  const models = h('datalist', { id: 'ai-models' })
+  const modelInput = field('aiModel', 'Model name', 'text', { list: 'ai-models' })
+  const keyInput = field('aiKey', 'Optional', 'password')
+  const result = h('span', { class: 'muted' })
+  const current = PRESETS.find((p) => p[2] === settings.aiUrl)?.[0] ?? 'custom'
+  const presets = seg([...PRESETS.map(([id, label]) => [id, label]), ['custom', 'Custom']], current, (v) => {
+    const p = PRESETS.find((x) => x[0] === v)
+    if (!p) return urlInput.focus()
+    urlInput.value = p[2]
+    save('aiUrl', p[2])
+  })
+  const test = h('button', {
+    onclick: async () => {
+      result.textContent = 'Connecting…'
+      try {
+        const list = await invoke('ai_models', { endpoint: { url: settings.aiUrl, key: settings.aiKey, model: '' } })
+        models.replaceChildren(...list.map((m) => h('option', { value: m })))
+        if (list.length === 1 && !settings.aiModel) {
+          modelInput.value = list[0]
+          save('aiModel', list[0])
+        }
+        result.textContent = list.length ? `Connected. ${list.length} model${list.length === 1 ? '' : 's'} found` : 'Connected, but the server lists no models'
+      } catch (e) {
+        result.textContent = String(e)
+      }
+    },
+  }, 'Test connection')
+  return h(
+    'div',
+    {},
+    row('AI chat', 'A chat panel like the one in VS Code, in the bottom panel (Alt+8)', seg([[true, 'On'], [false, 'Off']], settings.aiChat, (v) => {
+      save('aiChat', v)
+      if (v) closeNote('ai')
+      app.syncChat?.()
+    })),
+    row('Server', 'Ollama, LM Studio and llama.cpp run on your own computer', presets),
+    row('Address', 'Any server that speaks the OpenAI API', urlInput),
+    row('Model', 'Test the connection to see the names', h('span', {}, modelInput, models)),
+    row('API key', 'Only for online services. It stays on this computer', keyInput),
+    h('div', { class: 'set-actions' }, test, result),
+    h('p', { class: 'muted', style: 'padding:6px 0' }, 'Your code leaves this computer only if you point clight to an online service.'),
+  )
+}
+
 function toolsPage() {
   const opt = (key, sub, title, options, cb) =>
     row(
@@ -294,7 +350,7 @@ function toolsPage() {
   )
 }
 
-const PAGES = { theme: themePage, colors: colorsPage, interface: interfacePage, editor: editorPage, tools: toolsPage }
+const PAGES = { theme: themePage, colors: colorsPage, interface: interfacePage, editor: editorPage, tools: toolsPage, ai: aiPage }
 
 export function customizeView(initial = 'theme') {
   let section = initial

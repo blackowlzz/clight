@@ -1,50 +1,44 @@
+import { notify, closeNote } from './notify.js'
 import { h, invoke, listen, app, state, load, store, reg, toast, guard, modal, SEP } from './core.js'
 
 const LABEL = 'Download clangd utils'
 const DISMISSED = 'tools-dismissed'
 const REMIND_MS = 3 * 24 * 3600 * 1000
 
-let note = null
-let noteText = null
 let busy = false
 const bars = new Map()
 const titles = new Map()
+const NOTE = 'tools'
 
 const size = (n) => {
   const mb = n / 1048576
   return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`
 }
 
-function hideNote() {
-  note?.remove()
-  note = null
+function dismiss() {
+  if (!busy) store(DISMISSED, Date.now())
 }
 
-function showNote(text = `↓ ${LABEL}`) {
-  if (!note) {
-    noteText = h('button', { class: 'tn-open', onclick: () => guard(openMenu()) })
-    const dismiss = h('button', {
-      class: 'tn-x',
-      title: 'Dismiss',
-      onclick: () => {
-        if (busy) return
-        store(DISMISSED, Date.now())
-        hideNote()
-      },
-    }, '×')
-    note = h('div', { id: 'tools-note' }, noteText, dismiss)
-    document.body.append(note)
-  }
-  noteText.textContent = text
+function offerNote() {
+  notify({
+    id: NOTE,
+    title: LABEL,
+    body: 'clangd, clang-format, GCC, CMake and Ninja: errors as you type, formatting, building and running. They go in clight’s own folder and leave your system as it is.',
+    actions: [
+      { label: 'Choose what to install', primary: true, keep: true, run: () => guard(openMenu()) },
+      { label: 'Not now', run: dismiss },
+    ],
+    onDismiss: dismiss,
+  })
 }
 
 async function install(ids, close) {
   busy = true
-  showNote('↓ Downloading…')
+  notify({ id: NOTE, title: 'Downloading tools', body: 'Starting…', progress: 0 })
   try {
     const failures = await invoke('tools_install', { ids })
     close()
-    hideNote()
+    closeNote(NOTE)
     if (failures.length) toast(`${failures[0].title}: ${failures[0].error}`)
     else toast('Tools installed')
     if (state.root && state.lsp !== 'off') app.restartIntel?.()
@@ -91,12 +85,12 @@ listen('tools-progress', (e) => {
   const pct = Math.min(100, Math.floor((done / total) * 100))
   const el = bars.get(id)
   if (el) el.textContent = `${pct}%`
-  if (busy) showNote(`↓ Downloading ${titles.get(id) ?? id} ${pct}%`)
+  if (busy) notify({ id: NOTE, title: 'Downloading tools', body: `${titles.get(id) ?? id}  ${pct}%`, progress: pct / 100 })
 })
 
 reg('download-tools', `${LABEL}…`, null, openMenu, { hidden: SEP !== '\\' })
 
 export async function startup() {
   const list = await invoke('tools_status')
-  if (list.some((t) => t.recommended && !t.installed) && Date.now() - load(DISMISSED, 0) > REMIND_MS) showNote()
+  if (list.some((t) => t.recommended && !t.installed) && Date.now() - load(DISMISSED, 0) > REMIND_MS) offerNote()
 }

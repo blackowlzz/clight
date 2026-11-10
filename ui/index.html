@@ -11,6 +11,7 @@
       <defs>
         <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></symbol>
         <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2.2" /><circle cx="6" cy="19" r="2.2" /><circle cx="18" cy="7" r="2.2" /><path d="M6 7.2v9.6M18 9.2c0 4-6 3-12 6.5" /></symbol>
+        <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" /></symbol>
         <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-2.8 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.9l.1-.1a1.7 1.7 0 0 0-1.2-2.8H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.9-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></symbol>
         <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></symbol>
         <symbol id="i-tree" viewBox="0 0 24 24"><path d="M3 5h8M8 12h13M8 19h13M5 5v14h3M5 12h3" /></symbol>
@@ -86,6 +87,7 @@
           <button data-bottom="build" title="Build output (Alt+B)"><svg class="ic"><use href="#i-hammer" /></svg></button>
           <button data-bottom="run" title="Run output (Alt+4)"><svg class="ic"><use href="#i-play" /></svg></button>
           <button data-bottom="debug" title="Debug (Alt+5)"><svg class="ic"><use href="#i-bug" /></svg></button>
+          <button id="rail-chat" data-bottom="chat" title="AI chat (Alt+8)" hidden><svg class="ic"><use href="#i-chat" /></svg></button>
           <button data-bottom="terminal" title="Terminal (Alt+F12)"><svg class="ic"><use href="#i-terminal" /></svg></button>
           <button data-bottom="problems" title="Problems (Alt+6)"><svg class="ic"><use href="#i-alert" /></svg></button>
           <button id="rail-gear" title="Settings (Ctrl+Alt+S)"><svg class="ic"><use href="#i-gear" /></svg></button>
@@ -153,6 +155,7 @@
             <div id="v-problems" class="view list-view" hidden></div>
             <div id="v-find" class="view list-view" hidden></div>
             <div id="v-terminal" class="view" hidden></div>
+            <div id="v-chat" class="view chatview" hidden></div>
           </section>
         </main>
       </div>

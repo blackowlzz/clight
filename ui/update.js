@@ -1,3 +1,4 @@
+import { notify } from './notify.js'
 import { $, h, invoke, listen, app, state, settings, reg, toast, guard, modal } from './core.js'
 
 const button = $('update')
@@ -16,7 +17,7 @@ export async function check(manual = false) {
     if (info) {
       offer(info)
       if (manual) showDialog()
-      else toast(`clight ${info.version} is available. Click Update in the top bar`)
+      else notify({ id: 'update', title: `clight ${info.version} is available`, body: 'Open files are saved and clight restarts by itself.', actions: [{ label: 'Update and restart', primary: true, run: () => guard(install()) }, { label: 'Later' }] })
     } else if (manual) toast('clight is up to date')
   } catch (e) {
     if (manual) toast(`Couldn't check for updates: ${e}`)
