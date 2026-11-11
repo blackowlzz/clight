@@ -2158,6 +2158,30 @@ impl Doc {
         out.extend(std::iter::repeat_n(' ', vcols % self.tab));
     }
 
+    /// What a folded block shows after its first line: the line where it ends, without its
+    /// indentation, so that `int main() {` and a `}` below it read `int main() { … }`.
+    fn render_tail(&mut self, line: usize) -> String {
+        let mut toks = Vec::new();
+        self.render_line(line, &mut toks);
+        let text = self.line_text(line).into_owned();
+        let lead = text.len() - text.trim_start().len();
+        let end = text.trim_end().len();
+        let (mut out, mut pos, mut vcol, mut budget) = (String::new(), lead, 0, MAX_RENDER);
+        for t in &toks {
+            let (s, e) = ((t.start as usize).max(pos), (t.end as usize).min(end));
+            if s >= e {
+                continue;
+            }
+            self.emit(&text[pos..s], None, &mut vcol, &mut out, &mut budget);
+            self.emit(&text[s..e], Some(t.tag), &mut vcol, &mut out, &mut budget);
+            pos = e;
+        }
+        if pos < end {
+            self.emit(&text[pos..end], None, &mut vcol, &mut out, &mut budget);
+        }
+        out
+    }
+
     fn render_line(&mut self, i: usize, toks: &mut Vec<Tok>) -> (String, bool) {
         self.ensure_states(i);
         toks.clear();
@@ -2242,6 +2266,9 @@ impl Doc {
             let folded = self.folds.iter().any(|f| f.0 == line);
             if folded {
                 html.push_str("<e> \u{2026} </e>");
+                if let Some(end_line) = self.folds.iter().find(|f| f.0 == line).map(|f| f.1) {
+                    html.push_str(&self.render_tail(end_line));
+                }
             }
             if folded || foldable {
                 folds.push([row, if folded { 2 } else { 1 }]);
@@ -2750,6 +2777,19 @@ mod tests {
     }
 
     #[test]
+    fn a_folded_block_shows_where_it_ends_on_the_same_row() {
+        let mut d = cpp("void f() {\n    if (x) {\n        a;\n    } else {\n        b;\n    }\n}\n");
+        d.run(Cmd::ToggleFold { row: 1 }).unwrap();
+        let v = d.view(0, 10, false);
+        let plain = |l: &str| l.split('<').map(|p| p.split_once('>').map_or(p, |x| x.1)).collect::<String>();
+        assert_eq!(plain(&v.lines[1]), "    if (x) { \u{2026} } else {");
+        d.run(Cmd::ToggleFold { row: 0 }).unwrap();
+        let v = d.view(0, 10, false);
+        assert_eq!(plain(&v.lines[0]), "void f() { \u{2026} }");
+        assert_eq!(v.n, 2);
+    }
+
+    #[test]
     fn folding_hides_rows_and_keeps_numbers() {
         let mut d = cpp("int f() {\n  a;\n  b;\n}\nint x;\n");
         assert_eq!(d.view(0, 10, false).folds, vec![[0, 1]]);
@@ -2757,7 +2797,7 @@ mod tests {
         let v = d.view(0, 10, false);
         assert_eq!(v.n, 3);
         assert_eq!(v.nums, vec![0, 4, 5]);
-        assert!(v.lines[0].ends_with("<e> \u{2026} </e>"));
+        assert!(v.lines[0].ends_with("<e> \u{2026} </e>}"), "{}", v.lines[0]);
         d.run(Cmd::Goto { line: 4, col: 0 }).unwrap();
         d.run(Cmd::Move {
             to: Motion::Up,
