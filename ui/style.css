@@ -110,7 +110,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 .proj { display: flex; align-items: center; gap: 11px; padding: 7px 10px; border-radius: var(--r1); }
 .proj:hover { background: var(--hover); }
 .proj.gone { opacity: .5; }
-.ptile { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--r2); font: 600 12px var(--mono); flex: none; }
+.ptile { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; font: 600 13px/1 var(--sans); color: #fff; letter-spacing: 0.01em; flex: none; }
 .pinfo { flex: 1; min-width: 0; }
 .pname { font-size: 13px; }
 .ppath { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -428,7 +428,7 @@ kbd { font: inherit; font-size: 11.5px; color: var(--faint); white-space: nowrap
 .barchip .ic { width: 13px; height: 13px; color: var(--faint); }
 #st-git:empty { display: none; }
 #st-git::after { content: '⌄'; color: var(--faint); font-size: 12px; line-height: 1; margin-top: -4px; }
-.barchip .ptile { width: 18px; height: 18px; font-size: 8.5px; border-radius: var(--r1); }
+.barchip .ptile { width: 18px; height: 18px; font-size: 8.5px; border-radius: 4px; }
 .sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 5px; flex: none; }
 #run .ic { width: 11px; height: 11px; }
 #rail { width: 40px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0 6px; background: var(--chrome); }

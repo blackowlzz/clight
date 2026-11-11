@@ -19,17 +19,28 @@ function ago(t) {
   return d === 1 ? 'yesterday' : d < 30 ? `${d} days ago` : new Date(t).toLocaleDateString()
 }
 
-const TILE = ['k', 'f', 'r', 'n', 'y', 'v', 'd']
+// The colors of the project icons: a lighter and a darker shade of each.
+const TILE_COLORS = [
+  ['#6c9dff', '#3d6fe8'],
+  ['#f0a35e', '#e0762e'],
+  ['#b987f5', '#8b58dc'],
+  ['#5fcb8e', '#2fa865'],
+  ['#f27c8f', '#db4b64'],
+  ['#4fc6d0', '#2399a8'],
+  ['#e8c35a', '#cba030'],
+  ['#9aa6f8', '#6f74e6'],
+]
 
+/** The icon of a project, the way the JetBrains IDEs draw it: initials in white on a color. */
 export function tile(name) {
   let hash = 0
   for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) >>> 0
   const words = name.split(/[\s_.-]+/).filter(Boolean)
-  const letters = (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase()
-  const t = h('span', { class: 'ptile' }, letters)
-  const v = `var(--${TILE[hash % TILE.length]})`
-  t.style.color = v
-  t.style.background = `color-mix(in srgb, ${v} 16%, transparent)`
+  const letters = [...(words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2))]
+  const text = words.length > 1 ? letters.join('').toUpperCase() : letters[0].toUpperCase() + (letters[1] ?? '').toLowerCase()
+  const [light, dark] = TILE_COLORS[hash % TILE_COLORS.length]
+  const t = h('span', { class: 'ptile' }, text)
+  t.style.background = `linear-gradient(145deg, ${light}, ${dark})`
   return t
 }
 
