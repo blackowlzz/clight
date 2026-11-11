@@ -1323,6 +1323,21 @@ fn git_clone(url: String, parent: String) -> Res<String> {
 }
 
 #[tauri::command(async)]
+fn git_stash(root: String, pop: bool) -> Res<String> {
+    git::stash(&root, pop)
+}
+
+#[tauri::command(async)]
+fn git_merge(root: String, name: String) -> Res<String> {
+    git::merge(&root, &name)
+}
+
+#[tauri::command(async)]
+fn git_delete_branch(root: String, name: String) -> Res<()> {
+    git::delete_branch(&root, &name)
+}
+
+#[tauri::command(async)]
 fn git_checkout(root: String, name: String, create: bool) -> Res<()> {
     git::checkout(&root, &name, create)
 }
@@ -1563,6 +1578,9 @@ fn main() {
             git_show,
             git_branches,
             git_checkout,
+            git_stash,
+            git_merge,
+            git_delete_branch,
             git_clone,
             git_refresh,
             app_ready,

@@ -158,6 +158,28 @@ pub fn branches(root: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// A branch name that cannot be taken for an option.
+fn plain_name(name: &str) -> Result<&str, String> {
+    if name.is_empty() || name.starts_with('-') || name.contains(char::is_whitespace) {
+        return Err("Invalid branch name".into());
+    }
+    Ok(name)
+}
+
+/// Puts the changes away (`pop` false) or brings the last ones back.
+pub fn stash(root: &str, pop: bool) -> Result<String, String> {
+    let out = if pop { git(root, &["stash", "pop"])? } else { git(root, &["stash", "push", "--include-untracked"])? };
+    Ok(out.trim().to_string())
+}
+
+pub fn merge(root: &str, name: &str) -> Result<String, String> {
+    Ok(git(root, &["merge", "--no-edit", plain_name(name)?])?.trim().to_string())
+}
+
+pub fn delete_branch(root: &str, name: &str) -> Result<(), String> {
+    git(root, &["branch", "-d", plain_name(name)?]).map(|_| ())
+}
+
 pub fn checkout(root: &str, name: &str, create: bool) -> Result<(), String> {
     if create {
         git(root, &["switch", "-c", name]).map(|_| ())
@@ -265,6 +287,44 @@ mod tests {
     #[test]
     fn branch_without_upstream() {
         assert_eq!(parse_status("## feature\0").branch, "feature");
+    }
+
+    #[test]
+    fn stash_merge_and_delete_work_on_a_real_repository() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("git-flow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.to_str().unwrap();
+        let run = |args: &[&str]| git(root, args).unwrap();
+        run(&["init", "-q", "-b", "main"]);
+        run(&["config", "user.email", "t@example.com"]);
+        run(&["config", "user.name", "t"]);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "first"]);
+        std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "x\n").unwrap();
+        stash(root, false).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\n");
+        assert!(!dir.join("new.txt").exists());
+        stash(root, true).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "two\n");
+        run(&["commit", "-qam", "second"]);
+        checkout(root, "topic", true).unwrap();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "topic work"]);
+        checkout(root, "main", false).unwrap();
+        merge(root, "topic").unwrap();
+        assert!(dir.join("b.txt").exists());
+        delete_branch(root, "topic").unwrap();
+        assert!(!branches(root).unwrap().contains(&"topic".to_string()));
+        assert!(merge(root, "--abort").is_err());
+        assert!(delete_branch(root, "-D").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

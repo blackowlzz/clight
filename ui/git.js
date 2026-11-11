@@ -1,4 +1,4 @@
-import { $, h, invoke, app, state, reg, toast, guard, confirmBox, promptBox, showMenu, basename, seg, iconBtn } from './core.js'
+import { $, h, invoke, app, state, reg, toast, guard, confirmBox, promptBox, showMenu, basename, seg, iconBtn, palette, fuzzy } from './core.js'
 import { runTask, buildOut } from './build.js'
 
 const view = $('v-git')
@@ -156,6 +156,23 @@ export const panelActions = () =>
     iconBtn('refresh', 'Refresh', () => guard(refresh())),
   )
 
+async function stash(pop) {
+  await app.saveAll()
+  const out = await invoke('git_stash', { root: state.root, pop })
+  toast(String(out).split('\n')[0] || (pop ? 'Changes restored' : 'Changes stashed'))
+  await refresh()
+  await app.afterExternalChange()
+}
+
+function pickBranch(title, list, run) {
+  const others = list.filter((b) => b !== state.git?.branch)
+  palette({
+    placeholder: title,
+    query: async (q) => others.filter((b) => !q || fuzzy(q, b) >= 0).map((b) => ({ b, open: () => guard(run(b)) })),
+    render: ({ b }) => h('div', {}, h('b', {}, b)),
+  })
+}
+
 async function branchMenu() {
   if (!state.git) return
   const list = await invoke('git_branches', { root: state.root })
@@ -173,6 +190,21 @@ async function branchMenu() {
       const name = await promptBox('New branch', '', 'Create')
       if (name) guard(sw(name, true))
     }],
+    ['Merge Branch…', () => pickBranch('Merge into the current branch', list, async (b) => {
+      await app.saveAll()
+      toast(String(await invoke('git_merge', { root: state.root, name: b })).split('\n')[0] || 'Merged')
+      await refresh()
+      await app.afterExternalChange()
+    })],
+    ['Delete Branch…', () => pickBranch('Delete a branch', list, async (b) => {
+      if (await confirmBox(`Delete ${b}?`, 'Git only deletes it when it is merged.', 'Delete')) {
+        await invoke('git_delete_branch', { root: state.root, name: b })
+        toast(`Deleted ${b}`)
+      }
+    })],
+    '-',
+    ['Stash Changes', () => guard(stash(false))],
+    ['Unstash (Pop)', () => guard(stash(true))],
   ])
 }
 $('st-git').addEventListener('click', () => guard(branchMenu()))
