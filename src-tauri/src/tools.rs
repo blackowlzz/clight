@@ -383,7 +383,9 @@ fn unpack(kind: Kind, archive: &Path, into: &Path) -> Result<(), String> {
     match kind {
         Kind::Zip => unzip(archive, into),
         Kind::TarGz => {
-            let status = Command::new("tar")
+            let mut tar = Command::new("tar");
+            clean_env(&mut tar);
+            let status = tar
                 .arg("-xzf")
                 .arg(archive)
                 .arg("-C")
