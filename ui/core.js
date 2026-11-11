@@ -63,6 +63,8 @@ export const settings = {
   intel: load('intel', 'auto'),
   index: load('index', 'auto'),
   autosave: load('autosave', true),
+  trimSave: load('trimSave', false),
+  newlineSave: load('newlineSave', false),
   updates: load('updates', true),
   termBar: load('termBar', false),
   ghost: load('ghost', true),

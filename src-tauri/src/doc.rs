@@ -57,6 +57,11 @@ pub enum Cmd {
     Undo,
     Redo,
     ToggleComment,
+    /// Cleans up before saving: trailing spaces and the last newline.
+    Tidy {
+        trim: bool,
+        newline: bool,
+    },
     DuplicateLine,
     DeleteLine,
     CutSelection,
@@ -120,6 +125,7 @@ impl Cmd {
                 | Undo
                 | Redo
                 | ToggleComment
+                | Tidy { .. }
                 | DuplicateLine
                 | DeleteLine
                 | CutSelection
@@ -1855,6 +1861,32 @@ impl Doc {
         }
     }
 
+    fn tidy(&mut self, trim: bool, newline: bool) {
+        let (mut cur, mut anchor) = (self.cur, self.anchor);
+        if trim {
+            for l in (0..self.rope.len_lines()).rev() {
+                let text = self.line_text(l).into_owned();
+                let kept = text.trim_end_matches([' ', '\t']).chars().count();
+                let all = text.chars().count();
+                if kept == all {
+                    continue;
+                }
+                let start = self.rope.line_to_char(l);
+                let (a, b) = (start + kept, start + all);
+                self.edit(a, b, "");
+                let shift = |p: usize| if p >= b { p - (b - a) } else if p > a { a } else { p };
+                cur = shift(cur);
+                anchor = shift(anchor);
+            }
+        }
+        self.cur = cur;
+        self.anchor = anchor;
+        let len = self.rope.len_chars();
+        if newline && len > 0 && self.rope.char(len - 1) != '\n' {
+            self.edit(len, len, "\n");
+        }
+    }
+
     fn replace_all(&mut self, with: &str) {
         for l in (0..self.rope.len_lines()).rev() {
             let text = self.line_text(l).into_owned();
@@ -1960,6 +1992,7 @@ impl Doc {
             Undo => self.undo(),
             Redo => self.redo(),
             ToggleComment => self.toggle_comment(),
+            Tidy { trim, newline } => self.tidy(trim, newline),
             DuplicateLine => self.duplicate(),
             DeleteLine => self.delete_lines(),
             CutSelection => {
@@ -2696,6 +2729,17 @@ mod tests {
         let v = d.view(0, 40, false);
         assert_eq!(v.lines.len(), 46);
         assert!(d.states.len() < 100);
+    }
+
+    #[test]
+    fn tidy_trims_trailing_spaces_and_adds_the_last_newline() {
+        let mut d = cpp("int a;  \n\tb;\t\n  \nend");
+        d.run(Cmd::Goto { line: 0, col: 6 }).unwrap();
+        d.run(Cmd::Tidy { trim: true, newline: true }).unwrap();
+        assert_eq!(txt(&d), "int a;\n\tb;\n\nend\n");
+        assert_eq!(d.pos(d.cur), (0, 6));
+        d.run(Cmd::Undo).unwrap();
+        d.run(Cmd::Tidy { trim: false, newline: false }).unwrap();
     }
 
     #[test]

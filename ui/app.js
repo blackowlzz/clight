@@ -674,6 +674,10 @@ async function saveTab(t, { force = false, quiet = false } = {}) {
   if (t.virtual) return true
   await ed.idle()
   try {
+    if (settings.trimSave || settings.newlineSave) {
+      await ed.docCommand(t.id, [{ t: 'tidy', trim: settings.trimSave, newline: settings.newlineSave }])
+      await ed.idle()
+    }
     const ok = await invoke('doc_save', { id: t.id, force })
     if (!ok) {
       if (quiet) return false
