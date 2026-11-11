@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::io::{Read, Write};
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,6 +54,76 @@ pub fn clean_env(cmd: &mut Command) {
     }
     for k in ["APPDIR", "APPIMAGE", "ARGV0", "OWD", "GDK_BACKEND"] {
         cmd.env_remove(k);
+    }
+}
+
+/// Starts a program that must not outlive this one. On Linux the kernel ends it when this
+/// process dies, even when that is a crash or a kill. The signal follows the thread that started
+/// the program, so it is started from a thread that lasts as long as the process.
+pub fn spawn_tied(cmd: Command) -> std::io::Result<Child> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        use std::sync::{mpsc, OnceLock};
+        type Job = (Command, mpsc::Sender<std::io::Result<Child>>);
+        static SPAWNER: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
+        let sender = SPAWNER.get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<Job>();
+            std::thread::spawn(move || {
+                for (mut cmd, back) in rx {
+                    unsafe {
+                        cmd.pre_exec(|| {
+                            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                            Ok(())
+                        });
+                    }
+                    let _ = back.send(cmd.spawn());
+                }
+            });
+            Mutex::new(tx)
+        });
+        let (back, got) = mpsc::channel();
+        let gone = || std::io::Error::other("The process starter is gone");
+        sender.lock().unwrap_or_else(std::sync::PoisonError::into_inner).send((cmd, back)).map_err(|_| gone())?;
+        got.recv().map_err(|_| gone())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut cmd = cmd;
+        cmd.spawn()
+    }
+}
+
+/// Ends what the previous run left behind, if it was killed before it could stop its helpers.
+pub fn end_leftover(pid_file: &std::path::Path, exe_name: &str, home: &std::path::Path) {
+    let Some(pid) = std::fs::read_to_string(pid_file).ok().and_then(|t| t.trim().parse::<u32>().ok()) else {
+        return;
+    };
+    let _ = std::fs::remove_file(pid_file);
+    // Only a process that still is that program: the number may have been given to another.
+    #[cfg(unix)]
+    {
+        let same = std::fs::read_link(format!("/proc/{pid}/exe")).ok().and_then(|p| p.file_name().map(|n| n == exe_name)).unwrap_or(false);
+        // And one that was started by this app, on a model of this app: its command line says so.
+        let ours = std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|c| String::from_utf8_lossy(&c).contains(&*home.to_string_lossy()));
+        if same && ours {
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = home;
+        let mut list = Command::new("tasklist");
+        clean_env(&mut list);
+        let Ok(out) = list.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]).output() else { return };
+        let name = format!("{exe_name}.exe").to_lowercase();
+        if String::from_utf8_lossy(&out.stdout).to_lowercase().contains(&name) {
+            let mut kill = Command::new("taskkill");
+            clean_env(&mut kill);
+            let _ = kill.args(["/PID", &pid.to_string(), "/F"]).output();
+        }
     }
 }
 
@@ -244,5 +314,31 @@ mod tests {
             dropped: false,
         };
         assert_eq!(take_text(&mut q, false), "a\u{fffd}b");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod leftover_tests {
+    use super::*;
+
+    #[test]
+    fn a_leftover_helper_is_ended_only_when_it_is_the_one_we_started() {
+        let dir = std::env::temp_dir().join(format!("leftover-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut child = Command::new("sleep").arg("4321").spawn().unwrap();
+        let pid_file = dir.join("helper.pid");
+        std::fs::write(&pid_file, child.id().to_string()).unwrap();
+        // Another program's folder: left alone.
+        end_leftover(&pid_file, "sleep", std::path::Path::new("/somewhere/else"));
+        assert!(child.try_wait().unwrap().is_none());
+        std::fs::write(&pid_file, child.id().to_string()).unwrap();
+        // Another name: left alone.
+        end_leftover(&pid_file, "llama-server", std::path::Path::new("4321"));
+        assert!(child.try_wait().unwrap().is_none());
+        std::fs::write(&pid_file, child.id().to_string()).unwrap();
+        end_leftover(&pid_file, "sleep", std::path::Path::new("4321"));
+        assert!(child.wait().is_ok_and(|s| !s.success()));
+        assert!(!pid_file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

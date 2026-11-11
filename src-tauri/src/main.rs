@@ -1482,6 +1482,33 @@ fn tune_webkit() {
     }
 }
 
+#[cfg(unix)]
+static SIGNALED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(unix)]
+extern "C" fn on_signal(_: libc::c_int) {
+    SIGNALED.store(true, Ordering::SeqCst);
+}
+
+/// Being asked to end (logging out, the terminal closing, `kill`) stops the helpers too, so
+/// the AI engine does not stay behind using memory.
+#[cfg(unix)]
+fn watch_signals(app: AppHandle) {
+    unsafe {
+        for sig in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+            libc::signal(sig, on_signal as *const () as libc::sighandler_t);
+        }
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        if SIGNALED.load(Ordering::SeqCst) {
+            stop_children(&app.state::<AppState>());
+            app.exit(0);
+            return;
+        }
+    });
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli::handle_flag() {
@@ -1496,6 +1523,9 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             tools::extend_path(app.handle());
+            llama::sweep(app.handle());
+            #[cfg(unix)]
+            watch_signals(app.handle().clone());
             Ok(())
         })
         .manage(AppState {

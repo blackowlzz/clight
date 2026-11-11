@@ -1,4 +1,4 @@
-use crate::runner::{clean_env, lower_priority};
+use crate::runner::{clean_env, lower_priority, spawn_tied};
 use crate::tools;
 use serde::Serialize;
 use std::fs::File;
@@ -23,6 +23,7 @@ struct Running {
 static ENGINE: Mutex<Option<Running>> = Mutex::new(None);
 static STARTING: Mutex<()> = Mutex::new(());
 static WATCHER: Once = Once::new();
+static PID_FILE: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 
 #[derive(Serialize, Clone)]
 struct Status {
@@ -61,6 +62,7 @@ fn alive(model: &str) -> Option<u16> {
         let mut old = guard.take()?;
         let _ = old.child.kill();
         let _ = old.child.wait();
+        forget_pid();
         return None;
     }
     match running.child.try_wait() {
@@ -88,6 +90,30 @@ pub fn stop() {
         let _ = r.child.kill();
         let _ = r.child.wait();
     }
+    forget_pid();
+}
+
+/// The engine is gone, so the note of its number goes too.
+fn forget_pid() {
+    if let Some(path) = PID_FILE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn pid_path(log: &std::path::Path) -> std::path::PathBuf {
+    log.with_file_name("ai-engine.pid")
+}
+
+/// At startup: ends an engine that the last run left running because it was killed.
+pub fn sweep(app: &AppHandle) {
+    let Some(exe) = tools::tool_path(app, "ai-engine") else { return };
+    let name = exe.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(model) = ["ai-model", "ai-model-large"].iter().find_map(|m| tools::tool_path(app, m)) else {
+        return;
+    };
+    let log = model.parent().and_then(|p| p.parent()).map_or_else(|| exe.with_file_name("ai-engine.log"), |t| t.join("ai-engine.log"));
+    let home = log.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    crate::runner::end_leftover(&pid_path(&log), &name, &home);
 }
 
 fn healthy(port: u16) -> bool {
@@ -163,9 +189,9 @@ fn start(app: &AppHandle, id: u32, size: &str) -> Result<String, String> {
         cmd.env("LD_LIBRARY_PATH", format!("{}:{old}", dir.display()));
     }
     lower_priority(&mut cmd);
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Couldn't start the small AI: {e}"))?;
+    let child = spawn_tied(cmd).map_err(|e| format!("Couldn't start the small AI: {e}"))?;
+    let _ = std::fs::write(pid_path(&log_path), child.id().to_string());
+    *PID_FILE.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(pid_path(&log_path));
     // Registered at once, so quitting while it loads still stops it.
     *ENGINE.lock().unwrap() = Some(Running {
         child,
