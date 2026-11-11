@@ -402,6 +402,13 @@ fn grep(root: String, query: String) -> Vec<project::Hit> {
     project::grep(&root, &query)
 }
 
+/// Replaces text in the files of the project. Files with unsaved changes in the editor are left alone.
+#[tauri::command(async)]
+fn replace_in_project(root: String, query: String, with: String, state: State<AppState>) -> Res<(usize, usize)> {
+    let skip: Vec<std::path::PathBuf> = state.docs.lock().unwrap().values().filter(|d| d.is_dirty()).map(|d| d.path.clone()).collect();
+    project::replace_all(&root, &query, &with, &skip)
+}
+
 #[tauri::command]
 fn create_project(parent: String, name: String, cpp: bool) -> Res<String> {
     project::create_project(&parent, &name, cpp)
@@ -1570,6 +1577,7 @@ fn main() {
             list_dir,
             list_files,
             grep,
+            replace_in_project,
             create_project,
             fs_new_file,
             fs_new_dir,

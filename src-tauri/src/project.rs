@@ -359,6 +359,100 @@ pub fn sys_info() -> Sys {
     }
 }
 
+/// Where `needle` (already lowercase) is in `hay`, ignoring case.
+fn find_ci(hay: &str, needle: &str, from: usize) -> Option<(usize, usize)> {
+    let lower = hay.to_lowercase();
+    if lower.len() == hay.len() {
+        return lower[from..].find(needle).map(|i| (from + i, from + i + needle.len()));
+    }
+    // Some letters change length in lowercase: fall back to comparing ASCII only.
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    (from..=h.len().checked_sub(n.len())?)
+        .find(|&i| hay.is_char_boundary(i) && hay.is_char_boundary(i + n.len()) && h[i..i + n.len()].eq_ignore_ascii_case(n))
+        .map(|i| (i, i + n.len()))
+}
+
+/// Replaces `query` with `with` in every text file of the project, ignoring case.
+/// Returns how many files and how many places changed.
+pub fn replace_all(root: &str, query: &str, with: &str, skip: &[PathBuf]) -> Result<(usize, usize), String> {
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return Ok((0, 0));
+    }
+    let base = Path::new(root);
+    let (mut files, mut places) = (0, 0);
+    let mut failure: Option<String> = None;
+    walk(base, &mut |p, meta| {
+        if meta.len() > MAX_GREP_FILE || skip.iter().any(|s| s == p) {
+            return true;
+        }
+        let Ok(bytes) = fs::read(p) else { return true };
+        if bytes.iter().take(4096).any(|b| *b == 0) {
+            return true;
+        }
+        let Ok(text) = String::from_utf8(bytes) else { return true };
+        let mut out = String::with_capacity(text.len());
+        let (mut at, mut n) = (0, 0);
+        while let Some((s, e)) = find_ci(&text, &needle, at) {
+            out.push_str(&text[at..s]);
+            out.push_str(with);
+            at = e;
+            n += 1;
+        }
+        if n == 0 {
+            return true;
+        }
+        out.push_str(&text[at..]);
+        let tmp = p.with_extension(format!("replace-{}.tmp", std::process::id()));
+        let written = fs::write(&tmp, out).and_then(|()| {
+            if let Ok(m) = fs::metadata(p) {
+                let _ = fs::set_permissions(&tmp, m.permissions());
+            }
+            fs::rename(&tmp, p)
+        });
+        match written {
+            Ok(()) => {
+                files += 1;
+                places += n;
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                failure = Some(format!("{}: {e}", p.display()));
+                return false;
+            }
+        }
+        true
+    });
+    match failure {
+        Some(e) => Err(e),
+        None => Ok((files, places)),
+    }
+}
+
+#[cfg(test)]
+mod replace_tests {
+    use super::*;
+
+    #[test]
+    fn replacing_in_the_project_ignores_case_and_keeps_line_endings() {
+        let dir = std::env::temp_dir().join(format!("proj-replace-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/a.txt"), "Foo foo FOO\r\nbar\r\n").unwrap();
+        fs::write(dir.join("src/b.txt"), "nothing\n").unwrap();
+        fs::write(dir.join("src/bin.dat"), b"foo\0foo").unwrap();
+        let (files, places) = replace_all(dir.to_str().unwrap(), "Foo", "baz", &[]).unwrap();
+        assert_eq!((files, places), (1, 3));
+        assert_eq!(fs::read_to_string(dir.join("src/a.txt")).unwrap(), "baz baz baz\r\nbar\r\n");
+        assert_eq!(fs::read(dir.join("src/bin.dat")).unwrap(), b"foo\0foo");
+        let skipped = dir.join("src/a.txt");
+        fs::write(&skipped, "foo").unwrap();
+        assert_eq!(replace_all(dir.to_str().unwrap(), "foo", "x", std::slice::from_ref(&skipped)).unwrap(), (0, 0));
+        assert_eq!(find_ci("İfoo", "foo", 0), Some((2, 5)));
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

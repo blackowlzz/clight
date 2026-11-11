@@ -876,7 +876,27 @@ async function projectSearch() {
   if (!state.root) return
   await saveAll(true)
   const input = h('input', { placeholder: 'Find in project, Enter to search', spellcheck: 'false', value: lastGrep })
-  const header = h('div', { class: 'search-row' }, input)
+  const withInput = h('input', { placeholder: 'Replace with', spellcheck: 'false', value: lastWith })
+  const replaceBtn = h('button', { class: 'plain', title: 'Replace in every file of the project' }, 'Replace All')
+  const header = h('div', { class: 'search-row' }, input, withInput, replaceBtn)
+  replaceBtn.addEventListener('click', () =>
+    guard(
+      (async () => {
+        const q = input.value
+        if (q.length < 2) return toast('Type at least 2 letters to find')
+        lastWith = withInput.value
+        const yes = await confirmBox(`Replace "${q}" with "${lastWith}"?`, 'Every match in the files of this project changes on disk. Files with unsaved changes are skipped.', 'Replace All')
+        if (!yes) return
+        await saveAll(true)
+        const [files, places] = await invoke('replace_in_project', { root: state.root, query: q, with: lastWith })
+        toast(places ? `Replaced ${places} in ${files} file${files === 1 ? '' : 's'}` : 'Nothing to replace')
+        await app.afterExternalChange()
+        lastGrep = q
+        const hits = await invoke('grep', { root: state.root, query: q })
+        showHits('Find in Project', `${hits.length}${hits.length >= 400 ? '+' : ''} found`, hits, header)
+      })(),
+    ),
+  )
   const go = async () => {
     lastGrep = input.value
     if (lastGrep.length < 2) return
@@ -890,6 +910,7 @@ async function projectSearch() {
   input.select()
 }
 let lastGrep = ''
+let lastWith = ''
 
 let findOpen = false
 let findCase = false
