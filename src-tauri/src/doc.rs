@@ -7,7 +7,7 @@ use std::time::{Instant, SystemTime};
 
 pub const MAX_RENDER: usize = 4000;
 const MAX_UNDO_BYTES: usize = 8 << 20;
-const OVERSCAN: usize = 6;
+const OVERSCAN: usize = 30;
 const COALESCE_MS: u128 = 900;
 
 #[derive(Deserialize, Debug)]
@@ -2754,8 +2754,8 @@ mod tests {
         let text = "int x;\n".repeat(200_000);
         let mut d = cpp(&text);
         let v = d.view(0, 40, false);
-        assert_eq!(v.lines.len(), 46);
-        assert!(d.states.len() < 100);
+        assert_eq!(v.lines.len(), 40 + OVERSCAN);
+        assert!(d.states.len() < 40 + 2 * OVERSCAN + 40);
     }
 
     #[test]

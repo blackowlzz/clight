@@ -33,6 +33,11 @@ const TYPED_MS = 260
 
 const live = new Map()
 const spare = []
+// Rows that were drawn before, kept so that scrolling back, or on into rows that arrived with the
+// last view, shows text at once while the next view is on its way.
+const rowCache = new Map()
+let cacheKey = ''
+const CACHE_ROWS = 3000
 
 const rows = () => Math.max(1, Math.floor(scroll.clientHeight / LH))
 
@@ -151,6 +156,47 @@ function setHtml(el, key, html) {
   }
 }
 
+function viewKey(v) {
+  return `${docId}|${v.rev}|${v.n}|${v.total}|0`
+}
+
+function makeRow(n) {
+  let r = spare.pop()
+  if (!r) {
+    r = { l: document.createElement('div'), g: document.createElement('div') }
+    r.l.className = 'l'
+    r.g.className = 'gl'
+    linesEl.appendChild(r.l)
+    gutter.appendChild(r.g)
+  }
+  const y = n * LH + 'px'
+  r.l.style.top = y
+  r.g.style.top = y
+  r.l.style.left = PAD + 'px'
+  r.l.hidden = false
+  r.g.hidden = false
+  live.set(n, r)
+  return r
+}
+
+/** Draws, from what was drawn before, the rows in sight that the last view did not have. */
+function paintCached() {
+  if (!view || docId === null || cacheKey !== viewKey(view)) return
+  const first = Math.max(0, Math.floor(scroll.scrollTop / LH) - 2)
+  const last = Math.min(view.n, Math.ceil((scroll.scrollTop + scroll.clientHeight) / LH) + 2)
+  for (let n = first; n < last; n++) {
+    if (live.has(n)) continue
+    const c = rowCache.get(n)
+    if (!c) continue
+    const r = makeRow(n)
+    r.num = c.num
+    r.g.textContent = c.num
+    r.on = false
+    r.g.classList.remove('cur')
+    setHtml(r.l, '_h', c.html)
+  }
+}
+
 function paint(v, revealed) {
   view = v
   const digits = String(v.total).length
@@ -179,24 +225,7 @@ function paint(v, revealed) {
   const [curR, curV] = v.cur
   for (let i = 0; i < v.lines.length; i++) {
     const n = v.first + i
-    let r = live.get(n)
-    if (!r) {
-      r = spare.pop()
-      if (!r) {
-        r = { l: document.createElement('div'), g: document.createElement('div') }
-        r.l.className = 'l'
-        r.g.className = 'gl'
-        linesEl.appendChild(r.l)
-        gutter.appendChild(r.g)
-      }
-      const y = n * LH + 'px'
-      r.l.style.top = y
-      r.g.style.top = y
-      r.l.style.left = PAD + 'px'
-      r.l.hidden = false
-      r.g.hidden = false
-      live.set(n, r)
-    }
+    const r = live.get(n) ?? makeRow(n)
     const num = v.nums[i] + 1
     if (r.num !== num) {
       r.num = num
@@ -207,6 +236,18 @@ function paint(v, revealed) {
     if (r.on !== on) {
       r.on = on
       r.g.classList.toggle('cur', on)
+    }
+  }
+
+  if (!v.pending) {
+    const key = viewKey(v)
+    if (key !== cacheKey) {
+      rowCache.clear()
+      cacheKey = key
+    }
+    for (let i = 0; i < v.lines.length; i++) rowCache.set(v.first + i, { html: v.lines[i], num: v.cont[i] ? '' : v.nums[i] + 1 })
+    if (rowCache.size > CACHE_ROWS) {
+      for (const n of [...rowCache.keys()].sort((a, b) => Math.abs(b - v.top) - Math.abs(a - v.top)).slice(0, rowCache.size - CACHE_ROWS)) rowCache.delete(n)
     }
   }
 
@@ -419,7 +460,10 @@ scroll.addEventListener(
     scrollQueued = true
     requestAnimationFrame(() => {
       scrollQueued = false
-      if (Math.floor(scroll.scrollTop / LH) !== lastTop) repaint()
+      if (Math.floor(scroll.scrollTop / LH) !== lastTop) {
+        paintCached()
+        repaint()
+      }
     })
   },
   { passive: true },
