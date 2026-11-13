@@ -326,38 +326,59 @@ mod leftover_tests {
         let dir = std::env::temp_dir().join(format!("leftover-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut child = Command::new("sleep").arg("4321").spawn().unwrap();
-        // Until it has become `sleep`, /proc still shows the program that started it. On a busy
-        // machine (the whole test suite at once) that can take a few seconds.
+        let pid = child.id();
+        // What the checks of end_leftover look at, for the messages below.
+        let seen = || {
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).map(|p| p.display().to_string()).unwrap_or_else(|e| e.to_string());
+            let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).map(|c| String::from_utf8_lossy(&c).replace('\0', " ")).unwrap_or_else(|e| e.to_string());
+            format!("exe {exe:?}, command line {cmd:?}")
+        };
+        // Until it has become `sleep`, /proc still shows the program that started it, and for a
+        // moment after that the command line is still empty. On a busy machine (the whole test
+        // suite at once) that can take a few seconds.
+        let mut ready = false;
         for _ in 0..1000 {
-            let exe = std::fs::read_link(format!("/proc/{}/exe", child.id())).ok();
-            if exe.is_some_and(|p| p.file_name().is_some_and(|n| n == "sleep")) {
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+            let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+            if exe.is_some_and(|p| p.file_name().is_some_and(|n| n == "sleep")) && String::from_utf8_lossy(&cmd).contains("4321") {
+                ready = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if !ready {
+            let what = seen();
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("sleep did not start: {what}");
         }
         let pid_file = dir.join("helper.pid");
-        std::fs::write(&pid_file, child.id().to_string()).unwrap();
+        std::fs::write(&pid_file, pid.to_string()).unwrap();
         // Another program's folder: left alone.
         end_leftover(&pid_file, "sleep", std::path::Path::new("/somewhere/else"));
-        assert!(child.try_wait().unwrap().is_none());
-        std::fs::write(&pid_file, child.id().to_string()).unwrap();
+        assert!(matches!(child.try_wait(), Ok(None)), "ended for another folder: {}", seen());
+        std::fs::write(&pid_file, pid.to_string()).unwrap();
         // Another name: left alone.
         end_leftover(&pid_file, "llama-server", std::path::Path::new("4321"));
-        assert!(child.try_wait().unwrap().is_none());
-        std::fs::write(&pid_file, child.id().to_string()).unwrap();
+        assert!(matches!(child.try_wait(), Ok(None)), "ended for another name: {}", seen());
+        std::fs::write(&pid_file, pid.to_string()).unwrap();
+        let before = seen();
         end_leftover(&pid_file, "sleep", std::path::Path::new("4321"));
-        let mut ended = false;
+        let mut ended = None;
         for _ in 0..1000 {
-            if child.try_wait().unwrap().is_some() {
-                ended = true;
-                break;
+            match child.try_wait() {
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                other => {
+                    ended = Some(other);
+                    break;
+                }
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        if !ended {
+        if ended.is_none() {
             let _ = child.kill();
+            let _ = child.wait();
         }
-        assert!(ended, "the leftover was not ended");
+        assert!(matches!(ended, Some(Ok(Some(_)))), "the leftover was not ended ({ended:?}); before: {before}");
         assert!(!pid_file.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

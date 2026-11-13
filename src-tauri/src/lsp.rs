@@ -471,9 +471,13 @@ mod tests {
 
     #[test]
     fn uris_round_trip_with_spaces_and_accents() {
-        let p = PathBuf::from("/home/me/Università C++/a b.cpp");
+        let (p, want) = if cfg!(windows) {
+            (PathBuf::from(r"C:\Users\user\Café C++\a b.cpp"), "file:///C:/Users/user/Caf%C3%A9%20C%2B%2B/a%20b.cpp")
+        } else {
+            (PathBuf::from("/home/user/Café C++/a b.cpp"), "file:///home/user/Caf%C3%A9%20C%2B%2B/a%20b.cpp")
+        };
         let uri = uri_from_path(&p);
-        assert!(uri.starts_with("file:///home/me/Universit%C3%A0%20C%2B%2B/a%20b.cpp"));
+        assert_eq!(uri, want);
         assert_eq!(path_from_uri(&uri), Some(p));
     }
 }

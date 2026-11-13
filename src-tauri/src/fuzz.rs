@@ -7,14 +7,21 @@ use serde_json::{json, Value};
 
 thread_local! {
     static WHERE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Panics are caught and reported with the place in our code where they happened, past the
-/// frames of ropey and the std, instead of being printed as they happen.
+/// frames of ropey and the std, instead of being printed as they happen. Only on the fuzzing
+/// threads: the hook is shared by the whole test run, and the other tests' panics must show.
 fn quiet_panics() {
     static ONCE: std::sync::Once = std::sync::Once::new();
+    QUIET.with(|q| q.set(true));
     ONCE.call_once(|| {
-        std::panic::set_hook(Box::new(|_| {
+        let shown = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !QUIET.with(|q| q.get()) {
+                return shown(info);
+            }
             let bt = std::backtrace::Backtrace::force_capture().to_string();
             let ours: Vec<String> = bt.lines().filter(|l| l.contains("./src/") && !l.contains("fuzz.rs")).take(3).map(|l| l.trim().to_string()).collect();
             WHERE.with(|w| *w.borrow_mut() = ours.join(" <- "));

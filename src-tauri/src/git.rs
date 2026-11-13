@@ -302,6 +302,8 @@ mod tests {
         run(&["init", "-q", "-b", "main"]);
         run(&["config", "user.email", "t@example.com"]);
         run(&["config", "user.name", "t"]);
+        // Git for Windows turns \n into \r\n on checkout by default.
+        run(&["config", "core.autocrlf", "false"]);
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
         run(&["add", "."]);
         run(&["commit", "-qm", "first"]);
