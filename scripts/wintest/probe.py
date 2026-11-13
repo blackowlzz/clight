@@ -1,6 +1,6 @@
 """Runs the installed clight on a Windows runner and uses it with the system mouse and keyboard,
 taking screenshots of the screen while typing. Everything lands in C:\\out."""
-import os, subprocess, threading, time
+import os, subprocess, sys, threading, time
 import pyautogui
 
 pyautogui.FAILSAFE = False
@@ -13,10 +13,31 @@ with open(os.path.join(proj, "main.c"), "w", newline="\r\n") as f:
     for i in range(300):
         f.write(f"int f{i}(int x) {{ return x + {i}; }}\n")
 
-exe = os.path.expandvars(r"%LOCALAPPDATA%\clight\clight.exe")
+exe = sys.argv[1]
+OUT = os.path.join(OUT, sys.argv[2])
+os.makedirs(OUT, exist_ok=True)
+selftest = len(sys.argv) > 3
+shot = lambda name: pyautogui.screenshot(os.path.join(OUT, name + ".png"))
+if selftest:
+    logf = open(os.path.join(OUT, "selftest.log"), "w")
+    proc = subprocess.Popen([exe, os.path.join(proj, "main.c")], env=dict(os.environ, CLIGHT_SELFTEST=os.path.abspath(sys.argv[3])), stdout=logf, stderr=subprocess.STDOUT)
+    time.sleep(10)
+    pyautogui.click(892, 697)
+    time.sleep(1)
+    pyautogui.click(640, 300)
+    time.sleep(1)
+    pyautogui.write("abc")
+    shot("selftest-clicked")
+    for _ in range(120):
+        time.sleep(1)
+        if "done" in open(os.path.join(OUT, "selftest.log")).read():
+            break
+    shot("selftest-end")
+    proc.kill()
+    print(open(os.path.join(OUT, "selftest.log")).read())
+    sys.exit(0)
 proc = subprocess.Popen([exe, os.path.join(proj, "main.c")])
 time.sleep(20)
-shot = lambda name: pyautogui.screenshot(os.path.join(OUT, name + ".png"))
 shot("01-start")
 w, h = pyautogui.size()
 print("screen", w, h)
