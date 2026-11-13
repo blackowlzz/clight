@@ -40,6 +40,10 @@ jobs:
 
       - run: cargo install tauri-cli --version '^2' --locked
 
+      # The app updates itself from the release files and their SHA-256 on GitHub, without any
+      # key. The signature and latest.json are only for clight 0.1.13 and older, whose updater
+      # takes nothing else: if the key is ever lost, remove TAURI_SIGNING_*, includeUpdaterJson,
+      # updaterJsonPreferNsis, createUpdaterArtifacts and plugins.updater in tauri.conf.json.
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

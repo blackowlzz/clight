@@ -17,6 +17,7 @@ export async function check(manual = false) {
     if (info) {
       offer(info)
       if (manual) showDialog()
+      else if (info.manual) notify({ id: 'update', title: `clight ${info.version} is available`, body: 'This copy can\'t update itself: download the new version from GitHub.', actions: [{ label: 'Open Download Page', primary: true, run: () => guard(invoke('update_page')) }, { label: 'Later' }] })
       else notify({ id: 'update', title: `clight ${info.version} is available`, body: 'Open files are saved and clight restarts by itself.', actions: [{ label: 'Update and restart', primary: true, run: () => guard(install()) }, { label: 'Later' }] })
     } else if (manual) toast('clight is up to date')
   } catch (e) {
@@ -33,12 +34,14 @@ function showDialog() {
       { class: 'dialog' },
       h('h3', {}, `clight ${found.version} is available`),
       found.notes ? h('div', { class: 'notes' }, found.notes) : null,
-      h('p', { class: 'muted' }, 'Open files are saved and clight restarts by itself.'),
+      h('p', { class: 'muted' }, found.manual ? 'This copy can\'t update itself: download the new version from GitHub.' : 'Open files are saved and clight restarts by itself.'),
       h(
         'div',
         { class: 'actions' },
         h('button', { onclick: () => close() }, 'Later'),
-        h('button', { class: 'primary', onclick: () => (close(), guard(install())) }, 'Update and Restart'),
+        found.manual
+          ? h('button', { class: 'primary', onclick: () => (close(), guard(invoke('update_page'))) }, 'Open Download Page')
+          : h('button', { class: 'primary', onclick: () => (close(), guard(install())) }, 'Update and Restart'),
       ),
     ),
   )
