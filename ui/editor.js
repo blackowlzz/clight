@@ -286,7 +286,7 @@ function createEditor(pane) {
         rowCache.clear()
         cacheKey = key
       }
-      for (let i = 0; i < v.lines.length; i++) rowCache.set(v.first + i, { html: v.lines[i], num: v.cont[i] ? '' : v.nums[i] + 1 })
+      for (let i = 0; i < v.lines.length; i++) rowCache.set(v.first + i, { html: v.lines[i], num: v.nums[i] + 1 })
       if (rowCache.size > CACHE_ROWS) {
         for (const n of [...rowCache.keys()].sort((a, b) => Math.abs(b - v.top) - Math.abs(a - v.top)).slice(0, rowCache.size - CACHE_ROWS)) rowCache.delete(n)
       }
