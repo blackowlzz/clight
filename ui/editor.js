@@ -834,11 +834,15 @@ function adopt(e) {
     },
   })
   e.hooks(hookSet)
-  e.pane.querySelector('.e-ime').addEventListener('focus', () => {
+  // The group becomes the current one when its editor gets the focus, or as soon as it is
+  // pressed: the focus event doesn't come while the window itself is not the active one.
+  const take = () => {
     if (cur === e) return
     cur = e
     focusHandler(editors.indexOf(e))
-  })
+  }
+  e.pane.querySelector('.e-ime').addEventListener('focus', take)
+  e.pane.addEventListener('pointerdown', take, true)
   editors.push(e)
   return e
 }

@@ -987,14 +987,16 @@ function setStatusEmpty() {
 }
 
 ed.configure({
-  onChange(id, v) {
-    intel.viewChanged(v)
+  onChange(id, v, focused = true) {
     const tab = state.tabs.find((t) => t.id === id)
     if (!tab) return
     if (tab.dirty !== v.dirty) {
       tab.dirty = v.dirty
       renderTabs()
     }
+    // The other group drew: the status bar and the caret's helpers belong to the one with the focus.
+    if (!focused) return
+    intel.viewChanged(v)
     $('st-pos').textContent = `${v.line + 1}:${v.col}`
     $('st-indent').textContent = v.readonly ? 'Read only' : v.use_tabs ? 'Tabs' : `${v.tab} spaces`
     $('st-eol').textContent = v.crlf ? 'CRLF' : 'LF'
