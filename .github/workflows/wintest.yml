@@ -4,39 +4,6 @@ on:
     branches: [wintest]
 
 jobs:
-  release:
-    runs-on: windows-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { repo: clight, tag: v0.1.12 }
-          - { repo: assioma, tag: v0.1.0 }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install pyautogui==0.9.54 pillow
-      - name: Install
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download ${{ matrix.tag }} -R blackowlzz/${{ matrix.repo }} -p '*x64-setup.exe' -D C:\dl
-          $exe = (Get-ChildItem C:\dl\*.exe)[0].FullName
-          Start-Process $exe -ArgumentList '/S' -Wait
-          $app = (Get-ChildItem "$env:LOCALAPPDATA\*\${{ matrix.repo }}.exe")[0].FullName
-          echo "APP=$app" >> $env:GITHUB_ENV
-      - run: python scripts/wintest/probe.py "$env:APP" ${{ matrix.repo }}-${{ matrix.tag }}
-        shell: pwsh
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ${{ matrix.repo }}-${{ matrix.tag }}
-          path: C:\out
-
   selftest:
     runs-on: windows-latest
     timeout-minutes: 40
