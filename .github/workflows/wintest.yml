@@ -1,0 +1,34 @@
+name: wintest
+on:
+  push:
+    branches: [wintest]
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.49.1 pyautogui==0.9.54 pillow
+      - name: Install the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:TAG -R blackowlzz/clight -p '*x64-setup.exe' -D C:\dl
+          $exe = (Get-ChildItem C:\dl\*.exe)[0].FullName
+          Start-Process $exe -ArgumentList '/S' -Wait
+          Get-ChildItem -Recurse "$env:LOCALAPPDATA" -Filter clight.exe -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+      - name: Probe
+        shell: pwsh
+        run: python scripts/wintest/probe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe
+          path: C:\out
+    env:
+      TAG: v0.1.14
