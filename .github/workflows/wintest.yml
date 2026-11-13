@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install playwright==1.49.1 pyautogui==0.9.54 pillow
+      - run: pip install pyautogui==0.9.54 pillow
       - name: Install the release
         shell: pwsh
         env:
