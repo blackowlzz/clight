@@ -1081,7 +1081,7 @@ const rel = (p) => (state.root && p.startsWith(state.root + SEP) ? p.slice(state
 function groupHits(el, groups, renderHit) {
   el.append(
     ...[...groups].flatMap(([path, items]) => [
-      h('div', { class: 'group' }, basename(path), h('small', {}, rel(dirname(path)))),
+      h('div', { class: 'hit-file' }, basename(path), h('small', {}, rel(dirname(path)))),
       ...items.map(renderHit),
     ]),
   )
