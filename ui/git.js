@@ -20,7 +20,7 @@ export async function refresh() {
     b.textContent = branch + (ahead ? ` ↑${ahead}` : '') + (behind ? ` ↓${behind}` : '')
   } else b.textContent = ''
   app.renderTree?.()
-  if (state.left === 'git') render()
+  if (app.isShown?.('git')) render()
 }
 
 export function fileStatus(path) {

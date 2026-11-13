@@ -65,3 +65,7 @@ You need Rust and the WebKitGTK 4.1 development files.
     cargo run --release -- /path/to/project
 
 The fonts are Inter Tight and JetBrains Mono, both under the SIL Open Font License.
+
+## License
+
+You can use, copy, change and share it freely, as long as you don't sell it and you keep a credit to clight and Assioma. It comes as is, with no warranty: see [LICENSE](LICENSE) for the exact terms.

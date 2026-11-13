@@ -66,6 +66,7 @@ export const settings = {
   trimSave: load('trimSave', false),
   newlineSave: load('newlineSave', false),
   updates: load('updates', true),
+  discord: load('discord', true),
   termBar: load('termBar', false),
   ghost: load('ghost', true),
   ghostAi: load('ghostAi', true),

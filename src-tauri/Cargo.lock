@@ -399,6 +399,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-updater",
+ "tokio",
  "unicode-width",
  "vte",
  "winreg 0.56.0",

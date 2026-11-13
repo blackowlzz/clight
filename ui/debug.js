@@ -241,7 +241,7 @@ function syncTools() {
   toolEls.stop.disabled = !session
   state.debugging = session
   syncButtons()
-  $('panel-sub').textContent = state.bottom === 'debug' ? (session ? (paused ? 'Paused' : 'Running') : '') : ''
+  app.setHeader?.('debug', undefined, session ? (paused ? 'Paused' : 'Running') : '')
 }
 
 export const panelActions = () => toolbar

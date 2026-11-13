@@ -1,0 +1,55 @@
+clight and Assioma License
+
+Copyright (c) 2026 blackowlzz
+
+This license covers clight (https://github.com/blackowlzz/clight) and Assioma
+(https://github.com/blackowlzz/assioma), in source and in binary form, together called
+"the Software". Parts of the Software that come from other people keep their own licenses,
+which take precedence over this one for those parts: see the files that come with them, such
+as THIRD_PARTY.md and LICENSE-vscode.txt where present, and the licenses of the fonts and of
+the libraries the Software is built with.
+
+1. Permission
+
+You may, free of charge, use the Software for any purpose, copy it, study it, modify it, merge
+it with other work, and share it, in its original form or modified. A work that contains the
+Software, in whole or in part, or that is based on it, is called a "Derivative Work" below.
+These permissions are subject to the conditions that follow.
+
+2. No sale
+
+You may not sell the Software or a Derivative Work, or charge anything to obtain, download,
+install, use or unlock it, whether on its own or as part of another product, bundle or
+service. Sharing it free of charge is allowed.
+
+3. Credit
+
+Every copy of the Software and every Derivative Work, whole or partial, must:
+
+  a) keep this license and the copyright notice above, unchanged;
+  b) state clearly, in its documentation and, if it has one, in its about window or a similar
+     place in the program, that it is based on clight and/or Assioma by blackowlzz, with a
+     link to the original project or projects;
+  c) be shared under the terms of this same license.
+
+4. End of the permission
+
+If you do not respect these conditions, the permission given to you by this license ends at
+once, without notice.
+
+5. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY,
+RELIABILITY AND NON-INFRINGEMENT. You use the Software entirely at your own risk.
+
+6. No liability
+
+IN NO EVENT AND UNDER NO LEGAL THEORY, WHETHER IN CONTRACT, TORT (INCLUDING NEGLIGENCE) OR
+OTHERWISE, SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY OF ANY KIND, DIRECT OR INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL,
+INCLUDING BUT NOT LIMITED TO LOSS OF DATA, LOST OR DAMAGED FILES, LOSS OF PROFITS, BUSINESS
+INTERRUPTION, OR DAMAGE TO HARDWARE OR SOFTWARE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR ITS USE, OR WITH ANYTHING IT DOWNLOADS, RUNS OR SUGGESTS (INCLUDING THE TOOLS AND
+AI MODELS IT CAN INSTALL AND THE CODE THEY PRODUCE), EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.

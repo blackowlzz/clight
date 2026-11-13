@@ -81,22 +81,15 @@
 
       <div id="work" hidden>
         <nav id="rail">
-          <button data-left="project" title="Project (Alt+1)"><svg class="ic"><use href="#f-folder" /></svg></button>
-          <button data-left="structure" title="Structure (Alt+7)"><svg class="ic"><use href="#i-tree" /></svg></button>
-          <button data-left="git" title="Commit (Alt+0)"><svg class="ic"><use href="#i-branch" /></svg></button>
+          <div id="rail-left" class="railgroup"></div>
+          <div id="rail-right" class="railgroup"></div>
           <span class="grow"></span>
-          <button data-bottom="find" title="Find (Alt+3)"><svg class="ic"><use href="#i-search" /></svg></button>
-          <button data-bottom="build" title="Build output (Alt+B)"><svg class="ic"><use href="#i-hammer" /></svg></button>
-          <button data-bottom="run" title="Run output (Alt+4)"><svg class="ic"><use href="#i-play" /></svg></button>
-          <button data-bottom="debug" title="Debug (Alt+5)"><svg class="ic"><use href="#i-bug" /></svg></button>
-          <button id="rail-chat" title="AI chat (Alt+8)" hidden><svg class="ic"><use href="#i-chat" /></svg></button>
-          <button data-bottom="terminal" title="Terminal (Alt+F12)"><svg class="ic"><use href="#i-terminal" /></svg></button>
-          <button data-bottom="problems" title="Problems (Alt+6)"><svg class="ic"><use href="#i-alert" /></svg></button>
+          <div id="rail-bottom" class="railgroup"></div>
           <button id="rail-gear" title="Settings (Ctrl+Alt+S)"><svg class="ic"><use href="#i-gear" /></svg></button>
         </nav>
 
         <aside id="left" class="island">
-          <div class="toolhead"><span id="left-title"></span><span class="grow"></span><span id="left-actions" class="headacts"></span></div>
+          <div class="toolhead"><span id="left-title"></span><span id="left-sub" class="small muted"></span><span class="grow"></span><span id="left-actions" class="headacts"></span><button id="left-x" class="iconbtn" title="Hide"><svg class="ic"><use href="#i-x" /></svg></button></div>
           <div id="v-project" class="view" tabindex="0"></div>
           <div id="v-structure" class="view" hidden></div>
           <div id="v-git" class="view" hidden></div>
@@ -105,7 +98,9 @@
 
         <main id="main">
           <div id="editor-island" class="island">
-          <div id="tabs"></div>
+          <div id="groups">
+            <div class="group">
+            <div class="tabs"></div>
           <div id="findbar" hidden>
             <input id="find-q" placeholder="Find" spellcheck="false" />
             <span class="small muted" id="find-n"></span>
@@ -118,34 +113,36 @@
             <span class="grow"></span>
             <button id="find-x" class="iconbtn"><svg class="ic"><use href="#i-x" /></svg></button>
           </div>
-          <div id="ed">
-            <div id="empty"></div>
-            <div id="scroll" hidden>
-              <div id="sizer">
-                <div id="gutter"><div id="gmarks"></div></div>
-                <div id="text">
-                  <div id="curline"></div>
-                  <div id="margin"></div>
-                  <div id="execline" hidden></div>
-                  <div id="occ"></div>
-                  <div id="marks"></div>
-                  <div id="sel"></div>
-                  <div id="pair"></div>
-                  <div id="lines"></div>
-                  <div id="diags"></div>
-                  <div id="caret-trail"></div>
-                  <div id="caret-glow"></div>
-                  <div id="caret"></div>
-                  <div id="drop-caret" hidden></div>
-                  <div id="ghost" hidden></div>
-                  <textarea id="ime" autocapitalize="off" autocomplete="off" spellcheck="false" wrap="off" aria-label="Editor"></textarea>
+          <div class="e-ed">
+            <div class="e-empty"></div>
+            <div class="e-scroll" hidden>
+              <div class="e-sizer">
+                <div class="e-gutter"><div class="e-gmarks"></div></div>
+                <div class="e-text">
+                  <div class="e-curline"></div>
+                  <div class="e-margin"></div>
+                  <div class="e-execline" hidden></div>
+                  <div class="e-occ"></div>
+                  <div class="e-marks"></div>
+                  <div class="e-sel"></div>
+                  <div class="e-pair"></div>
+                  <div class="e-lines"></div>
+                  <div class="e-diags"></div>
+                  <div class="e-caret-trail"></div>
+                  <div class="e-caret-glow"></div>
+                  <div class="e-caret"></div>
+                  <div class="e-drop-caret" hidden></div>
+                  <div class="e-ghost" hidden></div>
+                  <textarea class="e-ime" autocapitalize="off" autocomplete="off" spellcheck="false" wrap="off" aria-label="Editor"></textarea>
                 </div>
               </div>
             </div>
             <div id="completion" hidden></div>
             <div id="hover" hidden></div>
             <div id="sig" hidden></div>
-            <div id="stripes"></div>
+            <div class="e-stripes"></div>
+          </div>
+            </div>
           </div>
           </div>
           <div class="hr" id="panel-rz" hidden></div>
@@ -161,7 +158,7 @@
         </main>
         <div class="vr" id="right-rz" hidden></div>
         <aside id="right" class="island" hidden>
-          <div class="toolhead"><span>AI Chat</span><span class="grow"></span><span id="right-actions" class="headacts"></span><button id="right-x" class="iconbtn" title="Close"><svg class="ic"><use href="#i-x" /></svg></button></div>
+          <div class="toolhead"><span id="right-title"></span><span id="right-sub" class="small muted"></span><span class="grow"></span><span id="right-actions" class="headacts"></span><button id="right-x" class="iconbtn" title="Close"><svg class="ic"><use href="#i-x" /></svg></button></div>
           <div id="v-chat" class="view chatview"></div>
         </aside>
       </div>

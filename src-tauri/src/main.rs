@@ -5,8 +5,11 @@ mod ai;
 mod cli;
 #[cfg(unix)]
 mod debug;
+mod discord;
 mod doc;
 mod format;
+#[cfg(test)]
+mod fuzz;
 mod git;
 mod lexer;
 mod llama;
@@ -107,6 +110,13 @@ fn clipboard_read(app: AppHandle) -> Res<String> {
     app.clipboard().read_text().map_err(|e| e.to_string())
 }
 
+/// Copies what Ctrl+C would, straight from the document: used when it is too big to send ahead.
+#[tauri::command(async)]
+fn doc_copy(id: u32, app: AppHandle, state: State<'_, AppState>) -> Res<()> {
+    let text = state.docs.lock().unwrap().get(&id).ok_or("Document is closed")?.clip_text();
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 fn clipboard_write(text: String, app: AppHandle) -> Res<()> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
@@ -146,7 +156,7 @@ fn doc_format(id: u32, style: String, state: State<'_, AppState>) -> Res<usize> 
 }
 
 #[cfg(unix)]
-#[tauri::command]
+#[tauri::command(async)]
 fn install_cli() -> Res<String> {
     use std::os::unix::fs::PermissionsExt;
     let exe = std::env::var("APPIMAGE")
@@ -177,7 +187,7 @@ fn install_cli() -> Res<String> {
 }
 
 #[cfg(windows)]
-#[tauri::command]
+#[tauri::command(async)]
 fn install_cli() -> Res<String> {
     cli::install()
 }
@@ -213,6 +223,11 @@ fn app_quit(app: AppHandle, state: State<AppState>) {
 }
 
 #[tauri::command]
+fn discord_presence(activity: Option<discord::Activity>) {
+    discord::set(activity);
+}
+
+#[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
@@ -229,12 +244,12 @@ async fn update_install(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
     app.restart()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn tools_status(app: AppHandle) -> Vec<tools::Status> {
     tools::status(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn ai_builtin_installed(size: String, app: AppHandle) -> bool {
     llama::installed(&app, &size)
 }
@@ -254,7 +269,7 @@ async fn tools_install(ids: Vec<String>, app: AppHandle) -> Res<Vec<tools::Failu
     tools::install(&app, &ids).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn tool_available(exe: String) -> bool {
     tools::find_on_path(&exe).is_some()
 }
@@ -291,24 +306,26 @@ fn mtime(path: &Path) -> Option<std::time::SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn doc_open(path: String, state: State<AppState>) -> Res<Opened> {
     let canon = canon(&path).map_err(|e| format!("{path}: {e}"))?;
     let shown = canon.to_string_lossy().into_owned();
     let name = canon
         .file_name()
         .map_or_else(|| shown.clone(), |n| n.to_string_lossy().into_owned());
-    let mut docs = state.docs.lock().unwrap();
-    if let Some((id, _)) = docs.iter().find(|(_, d)| d.path == canon) {
-        return Ok(Opened {
-            id: *id,
-            path: shown,
-            name,
-        });
+    let known = |docs: &HashMap<u32, Doc>| docs.iter().find(|(_, d)| d.path == canon).map(|(id, _)| *id);
+    if let Some(id) = known(&state.docs.lock().unwrap()) {
+        return Ok(Opened { id, path: shown, name });
     }
-    let text = read_text(&canon)?;
-    let id = state.next_doc.fetch_add(1, Ordering::Relaxed);
+    // The file is read without holding the lock, so a big file doesn't stop the other documents.
+    // The time is taken first: a change made while reading is then noticed by the next refresh.
     let m = mtime(&canon);
+    let text = read_text(&canon)?;
+    let mut docs = state.docs.lock().unwrap();
+    if let Some(id) = known(&docs) {
+        return Ok(Opened { id, path: shown, name });
+    }
+    let id = state.next_doc.fetch_add(1, Ordering::Relaxed);
     docs.insert(id, Doc::new(canon, &text, m));
     Ok(Opened {
         id,
@@ -325,7 +342,10 @@ fn doc_close(id: u32, state: State<AppState>) {
     }
 }
 
-#[tauri::command]
+/// Off the window's thread, which also puts the frames on screen: a slow view (a grammar
+/// coloring lines) must not hold them up. Order is kept by the editor, which sends one request
+/// at a time and waits for its answer.
+#[tauri::command(async)]
 fn doc_apply(
     id: u32,
     cmds: Vec<Cmd>,
@@ -342,23 +362,101 @@ fn doc_apply(
     Ok(doc.view(top, rows, reveal))
 }
 
-#[tauri::command]
-fn doc_save(id: u32, force: bool, state: State<AppState>) -> Res<bool> {
-    let mut docs = state.docs.lock().unwrap();
-    let doc = docs.get_mut(&id).ok_or("Document is closed")?;
-    if !force && doc.mtime.is_some() && mtime(&doc.path) != doc.mtime {
-        return Ok(false);
+/// The start of the error for a read-only file: the window then offers to save it anyway.
+const READ_ONLY: &str = "is read-only";
+
+/// Writes a whole file. Usually the text goes to a file next to it, which then takes its
+/// place, so a crash or a full disk never leaves half of it. Where that would lose something,
+/// the file is written in place instead, which is what VS Code does for every save.
+/// With `unlock`, a read-only file is made writable first (VS Code's "Overwrite").
+fn write_safely(path: &Path, text: &str, app: &str, unlock: bool) -> Res<()> {
+    let mut meta = fs::metadata(path).ok();
+    if let Some(m) = meta.as_mut().filter(|m| m.permissions().readonly()) {
+        // Replacing the file would get around its permissions (only the folder's count).
+        if !unlock {
+            let name = path.file_name().map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
+            return Err(format!("{name} {READ_ONLY}, so the changes were not saved"));
+        }
+        let mut p = m.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            p.set_mode(p.mode() | 0o200);
+        }
+        #[cfg(not(unix))]
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(false);
+        fs::set_permissions(path, p).map_err(|e| format!("{}: {e}", path.display()))?;
+        *m = fs::metadata(path).map_err(|e| e.to_string())?;
     }
-    let tmp = doc
-        .path
-        .with_extension(format!("clight-{}.tmp", std::process::id()));
-    fs::write(&tmp, doc.contents_for_disk()).map_err(|e| e.to_string())?;
-    if let Ok(meta) = fs::metadata(&doc.path) {
+    if meta.as_ref().is_some_and(must_write_in_place) {
+        return fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()));
+    }
+    let tmp = path.with_extension(format!("{app}-{}.tmp", std::process::id()));
+    match fs::write(&tmp, text) {
+        Ok(()) => {}
+        // A folder we may not create files in can still hold a file we may change: write it in
+        // place. Only for this error: after a full disk, writing in place could cut the file.
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return fs::write(path, text).map_err(|_| format!("{}: {e}", path.display()));
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!("{}: {e}", path.display()));
+        }
+    }
+    if let Some(meta) = &meta {
         let _ = fs::set_permissions(&tmp, meta.permissions());
     }
-    fs::rename(&tmp, &doc.path).map_err(|e| e.to_string())?;
-    doc.mtime = mtime(&doc.path);
-    doc.saved_rev = doc.rev;
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            // On Windows a file another program holds open can't be replaced, but it can still be
+            // written to.
+            if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied {
+                return fs::write(path, text).map_err(|_| format!("{}: {e}", path.display()));
+            }
+            Err(format!("{}: {e}", path.display()))
+        }
+    }
+}
+
+/// Replacing a file makes a new one: the other names of a hard-linked file would keep the old
+/// text, and a file of another user (one we may write to) would become ours.
+#[cfg(unix)]
+fn must_write_in_place(m: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    m.nlink() > 1 || m.uid() != unsafe { libc::geteuid() }
+}
+
+#[cfg(not(unix))]
+fn must_write_in_place(_: &fs::Metadata) -> bool {
+    false
+}
+
+/// Saves go one at a time, so two of them never write the same temporary file.
+static SAVING: Mutex<()> = Mutex::new(());
+
+#[tauri::command(async)]
+fn doc_save(id: u32, force: bool, unlock: Option<bool>, state: State<AppState>) -> Res<bool> {
+    let _one = SAVING.lock().unwrap_or_else(|e| e.into_inner());
+    // Only a copy of the text is taken under the lock: the disk is written to after letting go,
+    // so typing and the other documents aren't held up. What was typed meanwhile stays unsaved.
+    let (path, expected, text, rev) = {
+        let docs = state.docs.lock().unwrap();
+        let doc = docs.get(&id).ok_or("Document is closed")?;
+        (doc.path.clone(), doc.mtime, doc.contents_for_disk(), doc.rev)
+    };
+    if !force && expected.is_some() && mtime(&path) != expected {
+        return Ok(false);
+    }
+    write_safely(&path, &text, "clight", unlock.unwrap_or(false))?;
+    let now = mtime(&path);
+    if let Some(doc) = state.docs.lock().unwrap().get_mut(&id) {
+        doc.mtime = now;
+        doc.saved_rev = doc.saved_rev.max(rev);
+    }
     Ok(true)
 }
 
@@ -371,17 +469,26 @@ fn doc_search(id: u32, q: String, case: bool, state: State<AppState>) -> Res<usi
         .set_search(&q, case))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn docs_refresh(state: State<AppState>) -> Vec<u32> {
+    let open: Vec<_> = {
+        let docs = state.docs.lock().unwrap();
+        docs.iter().filter(|(_, d)| !d.is_dirty()).map(|(id, d)| (*id, d.path.clone(), d.mtime)).collect()
+    };
+    // The files are looked at and read without the lock; it is taken again only to apply them.
+    let fresh: Vec<_> = open
+        .into_iter()
+        .filter_map(|(id, path, old)| {
+            let now = mtime(&path).filter(|n| Some(*n) != old)?;
+            Some((id, read_text(&path).ok()?, now, old))
+        })
+        .collect();
     let mut docs = state.docs.lock().unwrap();
     let mut changed = vec![];
-    for (id, d) in docs.iter_mut() {
-        let now = mtime(&d.path);
-        if now.is_some() && now != d.mtime && !d.is_dirty() {
-            if let Ok(text) = read_text(&d.path) {
-                d.reload(&text, now);
-                changed.push(*id);
-            }
+    for (id, text, now, old) in fresh {
+        if let Some(d) = docs.get_mut(&id).filter(|d| !d.is_dirty() && d.mtime == old) {
+            d.reload(&text, Some(now));
+            changed.push(id);
         }
     }
     changed
@@ -409,12 +516,12 @@ fn replace_in_project(root: String, query: String, with: String, state: State<Ap
     project::replace_all(&root, &query, &with, &skip)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_project(parent: String, name: String, cpp: bool) -> Res<String> {
     project::create_project(&parent, &name, cpp)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fs_new_file(path: String) -> Res<()> {
     fs::OpenOptions::new()
         .write(true)
@@ -424,20 +531,41 @@ fn fs_new_file(path: String) -> Res<()> {
         .map_err(|e| format!("{path}: {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fs_new_dir(path: String) -> Res<()> {
     fs::create_dir(&path).map_err(|e| format!("{path}: {e}"))
 }
 
-#[tauri::command]
-fn fs_rename(from: String, to: String) -> Res<()> {
+/// Renames a file or a folder. Documents open from inside it follow it, unsaved changes and
+/// all, so a later save doesn't go to the old place. Returns them with their new paths.
+#[tauri::command(async)]
+fn fs_rename(from: String, to: String, state: State<AppState>) -> Res<Vec<Opened>> {
     if Path::new(&to).exists() {
         return Err(format!("{to} already exists"));
     }
-    fs::rename(&from, &to).map_err(|e| e.to_string())
+    let old = canon(&from).ok();
+    fs::rename(&from, &to).map_err(|e| e.to_string())?;
+    let (Some(old), Ok(new)) = (old, canon(&to)) else {
+        return Ok(vec![]);
+    };
+    let lsp = state.lsp.lock().unwrap().clone();
+    let mut docs = state.docs.lock().unwrap();
+    let mut moved = vec![];
+    for (id, d) in docs.iter_mut() {
+        let Ok(rest) = d.path.strip_prefix(&old) else { continue };
+        let path = if rest.as_os_str().is_empty() { new.clone() } else { new.join(rest) };
+        if let Some(l) = &lsp {
+            l.close(d);
+        }
+        d.moved_to(path);
+        let shown = d.path.to_string_lossy().into_owned();
+        let name = d.path.file_name().map_or_else(|| shown.clone(), |n| n.to_string_lossy().into_owned());
+        moved.push(Opened { id: *id, path: shown, name });
+    }
+    Ok(moved)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn fs_delete(path: String) -> Res<()> {
     let p = Path::new(&path);
     if p.is_dir() {
@@ -448,17 +576,17 @@ fn fs_delete(path: String) -> Res<()> {
     .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn path_exists(path: String) -> bool {
     Path::new(&path).exists()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sys_info() -> project::Sys {
     project::sys_info()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn task_start(
     program: String,
     args: Vec<String>,
@@ -533,7 +661,7 @@ fn term_note(id: u32, text: String, state: State<AppState>) -> Res<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cmake_prepare(build: String) -> Res<()> {
     project::request_codemodel(Path::new(&build))
 }
@@ -543,12 +671,12 @@ fn cmake_targets(build: String) -> Vec<project::Target> {
     project::cmake_targets(Path::new(&build))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn unbuffered_helper(dir: String) -> Res<String> {
     project::write_unbuffered_helper(Path::new(&dir))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn make_dirs(path: String) -> Res<()> {
     fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
@@ -583,7 +711,12 @@ fn lsp_start(
     for id in ids {
         let _ = lsp.sync(&state, id);
     }
-    *state.lsp.lock().unwrap() = Some(lsp);
+    *state.lsp.lock().unwrap() = Some(lsp.clone());
+    // Files opened while clangd was starting had nothing to be handed to: do it now.
+    let late: Vec<u32> = state.docs.lock().unwrap().iter().filter(|(_, d)| d.lsp_rev.is_none()).map(|(id, _)| *id).collect();
+    for id in late {
+        let _ = lsp.sync(&state, id);
+    }
     Ok(())
 }
 
@@ -1358,7 +1491,7 @@ fn git_refresh(id: u32, state: State<'_, AppState>) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn term_open(
     cwd: String,
     cols: usize,
@@ -1509,6 +1642,22 @@ fn watch_signals(app: AppHandle) {
     });
 }
 
+/// Many commands wait: for clangd, for git, for the disk. Each one holds a worker of the runtime
+/// while it waits, and Tauri starts only as many as there are cores, so on a small machine two slow
+/// requests were enough to keep everything else in line. Waiting costs no CPU, so there are more.
+fn use_own_runtime() {
+    let cores = std::thread::available_parallelism().map_or(2, |n| n.get());
+    if let Ok(rt) = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads((cores * 8).clamp(16, 32))
+        .thread_name("clight-worker")
+        .enable_all()
+        .build()
+    {
+        // It lives as long as the program, and is never dropped (that would wait for its tasks).
+        tauri::async_runtime::set(Box::leak(Box::new(rt)).handle().clone());
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli::handle_flag() {
@@ -1517,6 +1666,8 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     tune_webkit();
+
+    use_own_runtime();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1580,7 +1731,9 @@ fn main() {
             tool_available,
             clipboard_read,
             clipboard_write,
+            doc_copy,
             doc_format,
+            discord_presence,
             app_version,
             update_check,
             update_install,
@@ -1652,4 +1805,90 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to start clight");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("clight-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn saving_replaces_the_file_and_leaves_nothing_behind() {
+        let d = scratch("save");
+        let f = d.join("a.c");
+        fs::write(&f, "old").unwrap();
+        write_safely(&f, "new", "clight", false).unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_read_only_file_is_not_overwritten() {
+        let d = scratch("ro");
+        let f = d.join("a.c");
+        fs::write(&f, "old").unwrap();
+        let mut p = fs::metadata(&f).unwrap().permissions();
+        p.set_readonly(true);
+        fs::set_permissions(&f, p).unwrap();
+        let e = write_safely(&f, "new", "clight", false).unwrap_err();
+        assert!(e.contains("read-only"), "{e}");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "old");
+        let mut p = fs::metadata(&f).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(false);
+        let _ = fs::set_permissions(&f, p);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn overwriting_a_read_only_file_makes_it_writable() {
+        let d = scratch("unlock");
+        let f = d.join("a.c");
+        fs::write(&f, "old").unwrap();
+        let mut p = fs::metadata(&f).unwrap().permissions();
+        p.set_readonly(true);
+        fs::set_permissions(&f, p).unwrap();
+        write_safely(&f, "new", "clight", true).unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        assert!(!fs::metadata(&f).unwrap().permissions().readonly());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// Saving through one name of a hard-linked file changes it under every name.
+    #[cfg(unix)]
+    #[test]
+    fn a_hard_linked_file_stays_linked() {
+        let d = scratch("link");
+        let (f, g) = (d.join("a.c"), d.join("b.c"));
+        fs::write(&f, "old").unwrap();
+        fs::hard_link(&f, &g).unwrap();
+        write_safely(&f, "new", "clight", false).unwrap();
+        assert_eq!(fs::read_to_string(&g).unwrap(), "new");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// A shared folder where only the file itself may be changed.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_in_a_locked_folder_is_written_in_place() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = scratch("locked");
+        let f = d.join("a.c");
+        fs::write(&f, "old").unwrap();
+        fs::set_permissions(&d, fs::Permissions::from_mode(0o555)).unwrap();
+        let r = write_safely(&f, "new", "clight", false);
+        fs::set_permissions(&d, fs::Permissions::from_mode(0o755)).unwrap();
+        // Running as root ignores the folder's permissions; then the usual way is taken.
+        r.unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(&d);
+    }
 }

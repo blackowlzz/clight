@@ -137,6 +137,8 @@ const MONOS = {
 }
 const DENSITY = { compact: { row: 20, bar: 30, tab: 26 }, normal: { row: 22, bar: 34, tab: 30 }, comfortable: { row: 26, bar: 38, tab: 34 } }
 
+export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+
 export function apply() {
   const s = root.style
   const c = colors()
@@ -168,8 +170,9 @@ export function apply() {
   const [gr, gg, gb] = rgb(c.glow)
   s.setProperty('--glow-c', `rgba(${gr},${gg},${gb},${look.glowStrength / 100})`)
   s.setProperty('--glow-size', look.glowRadius + 'px')
-  const capable = state.sys.cores >= 4 && (state.sys.total_mb === 0 || state.sys.total_mb >= 3500) && !matchMedia('(prefers-reduced-motion: reduce)').matches
-  const effect = (v) => (v === 'on' || (v === 'auto' && capable) ? 'on' : 'off')
+  // Auto means on, whatever the machine: Off is there for whoever wants them off. Only a system
+  // that asks for less motion (an accessibility setting) keeps the effects left on Auto off.
+  const effect = (v) => (v === 'on' || (v === 'auto' && !reducedMotion()) ? 'on' : 'off')
   root.dataset.fxUi = effect(look.fxUi)
   root.dataset.fxCaret = effect(look.fxCaret)
   root.dataset.fxTrail = effect(look.fxTrail)

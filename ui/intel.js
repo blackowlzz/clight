@@ -9,17 +9,31 @@ export function setLsp(s) {
   $('st-clangd').textContent = { off: 'clangd off', starting: 'clangd starting…', on: 'clangd', error: SEP === '\\' ? 'Install clangd…' : 'clangd unavailable' }[s]
 }
 
-export async function startIntel() {
+// Start, restart and stop go one after the other: clangd now starts while the project is
+// still opening, and a stop must never overtake a start that is still on its way.
+let turn = Promise.resolve()
+const inTurn = (fn) => {
+  const run = turn.then(fn)
+  turn = run.catch(() => {})
+  return run
+}
+
+export const startIntel = () => inTurn(start)
+export const restartIntel = () => inTurn(restart)
+export const stopIntel = () => inTurn(stop)
+
+async function start() {
+  if (!state.root) return
   state.sys = await invoke('sys_info')
   const auto = state.sys.avail_mb === 0 || state.sys.avail_mb >= 1200
   if (settings.intel === 'off' || (settings.intel === 'auto' && !auto)) {
     setLsp('off')
     return
   }
-  await restartIntel()
+  await restart()
 }
 
-export async function restartIntel() {
+async function restart() {
   setLsp('starting')
   const index = settings.index === 'on' || (settings.index === 'auto' && state.sys.avail_mb >= 3000)
   try {
@@ -62,7 +76,7 @@ export function syncDoc(id) {
   else if (state.lsp === 'error') compilerCheck(id)
 }
 
-export async function stopIntel() {
+async function stop() {
   await invoke('lsp_stop')
   setLsp('off')
   ed.repaint()
@@ -195,7 +209,7 @@ export function hidePopups() {
 
 function place(el) {
   const c = ed.caretBox()
-  const box = $('ed').getBoundingClientRect()
+  const box = ed.host().getBoundingClientRect()
   const below = c.y + c.lh + el.offsetHeight + 4 < box.height
   el.style.left = Math.max(6, Math.min(c.x, box.width - el.offsetWidth - 10)) + 'px'
   el.style.top = (below ? c.y + c.lh + 2 : Math.max(0, c.y - el.offsetHeight - 2)) + 'px'
@@ -336,7 +350,7 @@ export function showHover(text, atCaret = true, point = null) {
   hoverSticky = atCaret
   if (atCaret) place(hoverEl)
   else {
-    const box = $('ed').getBoundingClientRect()
+    const box = ed.host().getBoundingClientRect()
     hoverEl.style.left = Math.max(6, Math.min(point.x - box.left, box.width - hoverEl.offsetWidth - 10)) + 'px'
     const y = point.y - box.top
     hoverEl.style.top = (y + hoverEl.offsetHeight + 24 < box.height ? y + 16 : Math.max(0, y - hoverEl.offsetHeight - 8)) + 'px'
@@ -424,7 +438,7 @@ async function codeActions() {
   const list = await invoke('lsp_code_actions', { id: state.active })
   if (!list.length) return toast('No actions here')
   const c = ed.caretBox()
-  const box = $('ed').getBoundingClientRect()
+  const box = ed.host().getBoundingClientRect()
   showMenu(
     box.left + c.x,
     box.top + c.y + c.lh + 2,

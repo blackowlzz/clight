@@ -3,6 +3,7 @@ import { h, app, state, settings, store, toast, modal, promptBox, seg } from './
 import * as intel from './intel.js'
 import { closeNote } from './notify.js'
 import * as ai from './ai.js'
+import * as presence from './presence.js'
 import { PRESETS } from './ai.js'
 import { invoke, guard } from './core.js'
 
@@ -205,10 +206,10 @@ function interfacePage(rerender) {
     row('Text size', '', slider('uiSize', 11, 16, 0.5, 'px')),
     row('Corners', '0 is fully square', slider('radius', 0, 10, 1, 'px')),
     row('Density', '', pick('density', [['compact', 'Compact'], ['normal', 'Normal'], ['comfortable', 'Roomy']])),
-    row('Mouse glow', 'Auto turns it off on weak machines', pick('glow', [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']])),
+    row('Mouse glow', 'Auto turns it on, unless the system asks for less motion', pick('glow', [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']])),
     row('Glow strength', '', slider('glowStrength', 1, 20, 1, '%')),
     row('Glow size', '', slider('glowRadius', 80, 500, 20, 'px')),
-    row('Interface animations', 'Popups, panels, hover. Auto turns them off on weak machines', pick('fxUi', AUTO)),
+    row('Interface animations', 'Popups, panels, hover. Auto turns them on, unless the system asks for less motion', pick('fxUi', AUTO)),
     row('Smooth caret', 'The caret glides to its new position', pick('fxCaret', AUTO)),
     row('Caret motion blur', 'A short streak behind the caret as it moves', pick('fxTrail', AUTO)),
     row('Typing effects', 'A soft glow that follows the caret, a pulse on matching brackets, and a fade on new lines and saves', pick('fxType', AUTO)),
@@ -395,6 +396,7 @@ function toolsPage() {
     opt('trimSave', 'Removes spaces at the end of lines when a file is saved', 'Trim trailing spaces', onOff),
     opt('newlineSave', 'Makes sure the file ends with a new line when it is saved', 'Final new line', onOff),
     opt('updates', 'At startup, from GitHub', 'Check for updates', onOff),
+    opt('discord', 'Shows the file and project you are working on in your Discord profile, if Discord is open', 'Discord status', onOff, () => presence.sync()),
     opt('termBar', 'A separate command field, or typing straight into the shell', 'Terminal input', [[true, 'Command bar'], [false, 'Classic']], () => app.term?.syncBar()),
   )
 }

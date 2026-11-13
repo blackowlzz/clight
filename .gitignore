@@ -1,4 +1,30 @@
+# Build output
 target/
 src-tauri/gen/
 cmake-build-*/
 .clight/
+
+# Packages made by `cargo tauri build` or the install script, if copied around
+*.AppImage
+*.deb
+*.rpm
+*.msi
+*-setup.exe
+
+# Left behind if a save or a Replace in Project is interrupted
+*.clight-*.tmp
+*.replace-*.tmp
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and local environment
+*.log
+.env
+.env.*

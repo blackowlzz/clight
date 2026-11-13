@@ -9,6 +9,8 @@ import * as ai from './ai.js'
 import { closeNote } from './notify.js'
 import { TERMINAL_PASS } from './termkeys.js'
 import * as theme from './theme.js'
+import * as presence from './presence.js'
+import * as layout from './layout.js'
 import * as settingsPage from './settings.js'
 import { renderHome, tile } from './welcome.js'
 
@@ -39,7 +41,7 @@ function onPointerGlow(e) {
   }
 }
 function applyGlow() {
-  const want = theme.look.glow === 'on' || (theme.look.glow === 'auto' && state.sys.cores >= 4 && (state.sys.total_mb === 0 || state.sys.total_mb >= 3500))
+  const want = theme.look.glow === 'on' || (theme.look.glow === 'auto' && !theme.reducedMotion())
   if (want === glowOn) return
   glowOn = want
   glow.hidden = true
@@ -68,80 +70,88 @@ async function loadTerm() {
   return termMod
 }
 
-const LEFT = { project: 'Project', structure: 'Structure', git: 'Commit' }
-const BOTTOM = { build: 'Build', run: 'Run', debug: 'Debug', problems: 'Problems', find: 'Find', terminal: 'Terminal' }
+// The tool windows, and where each one lives unless the layout moved it (see layout.js).
+const outputActions = (name, acts) => {
+  if (name === 'run') acts.append(iconBtn('refresh', 'Rerun (Shift+F10)', () => guard(app.rerun())), iconBtn('stop', 'Stop (Ctrl+F2)', () => guard(app.stopTask())))
+  acts.append(h('button', { class: 'plain', onclick: () => (name === 'run' ? build.clearRun() : build.buildOut.clear()) }, 'Clear'))
+  if (name === 'run') build.runTermShown()
+}
+layout.define(
+  {
+    project: { title: 'Project', icon: 'folder', tip: 'Project (Alt+1)', home: 'left' },
+    structure: { title: 'Structure', icon: 'tree', tip: 'Structure (Alt+7)', home: 'left', shown: () => refreshStructure() },
+    git: {
+      title: 'Commit', icon: 'branch', tip: 'Commit (Alt+0)', home: 'left',
+      shown: (acts) => {
+        acts.append(git.panelActions())
+        git.shown()
+      },
+    },
+    chat: {
+      title: 'AI Chat', icon: 'chat', tip: 'AI chat (Alt+8)', home: 'right',
+      available: () => settings.aiChat,
+      shown: async (acts, still) => {
+        const c = await loadChat()
+        if (!still()) return
+        acts.append(c.panelActions())
+        c.shown()
+      },
+    },
+    find: { title: 'Find', icon: 'search', tip: 'Find (Alt+3)', home: 'bottom' },
+    build: { title: 'Build', icon: 'hammer', tip: 'Build output (Alt+B)', home: 'bottom', shown: (acts) => outputActions('build', acts) },
+    run: { title: 'Run', icon: 'play', tip: 'Run output (Alt+4)', home: 'bottom', shown: (acts) => outputActions('run', acts) },
+    debug: {
+      title: 'Debug', icon: 'bug', tip: 'Debug (Alt+5)', home: 'bottom',
+      available: () => SEP !== '\\',
+      shown: async (acts, still) => {
+        const d = await loadDebug()
+        if (!still()) return
+        acts.append(d.panelActions())
+        d.refreshHeader()
+      },
+    },
+    terminal: {
+      title: 'Terminal', icon: 'terminal', tip: 'Terminal (Alt+F12)', home: 'bottom',
+      shown: async (acts, still) => {
+        const t = await loadTerm()
+        if (!still()) return
+        acts.append(t.panelActions())
+        t.shown()
+      },
+    },
+    problems: { title: 'Problems', icon: 'alert', tip: 'Problems (Alt+6)', home: 'bottom', shown: () => refreshProblems() },
+  },
+  {
+    onChange: () => {
+      $('chat-toggle').classList.toggle('on', layout.isShown('chat'))
+      store('chatOpen', layout.isShown('chat'))
+      // A place closed with the focus in it: give it back to the editor.
+      if (document.activeElement?.closest('[hidden]')) ed.focus()
+      saveSession()
+    },
+  },
+)
 
+/** Shows a view of the side bar; without `force`, a view already shown is hidden. */
 function showLeft(name, force = false) {
-  const same = state.left === name
-  state.left = same && !force ? null : name
-  $('left').hidden = state.left === null
-  $('side-rz').hidden = state.left === null
-  for (const n of Object.keys(LEFT)) $('v-' + n).hidden = n !== state.left
-  document.querySelectorAll('[data-left]').forEach((b) => b.classList.toggle('on', b.dataset.left === state.left))
-  if (state.left === null) {
-    ed.focus()
-  } else {
-    $('left-title').textContent = LEFT[state.left]
-    const acts = $('left-actions')
-    acts.replaceChildren()
-    if (state.left === 'structure') refreshStructure()
-    if (state.left === 'git') {
-      acts.append(git.panelActions())
-      git.shown()
-    }
-  }
-  saveSession()
+  return layout.show(name, { toggle: !force })
 }
-
-async function showBottom(name, force = true) {
-  if (state.bottom === name && !force) {
-    hideBottom()
-    return
-  }
-  state.bottom = name
-  $('panel').hidden = false
-  $('panel-rz').hidden = false
-  for (const n of Object.keys(BOTTOM)) $('v-' + n).hidden = n !== name
-  document.querySelectorAll('[data-bottom]').forEach((b) => b.classList.toggle('on', b.dataset.bottom === name))
-  $('panel-title').textContent = BOTTOM[name]
-  $('panel-sub').textContent = ''
-  const acts = $('panel-actions')
-  acts.replaceChildren()
-  if (name === 'build' || name === 'run') {
-    const out = name === 'build' ? build.buildOut : build.runOut
-    if (name === 'run') acts.append(iconBtn('refresh', 'Rerun (Shift+F10)', () => guard(app.rerun())), iconBtn('stop', 'Stop (Ctrl+F2)', () => guard(app.stopTask())))
-    acts.append(h('button', { class: 'plain', onclick: () => (name === 'run' ? build.clearRun() : out.clear()) }, 'Clear'))
-    if (name === 'run') build.runTermShown()
-  } else if (name === 'debug') {
-    const d = await loadDebug()
-    if (state.bottom === 'debug') {
-      acts.append(d.panelActions())
-      d.refreshHeader()
-    }
-  } else if (name === 'terminal') {
-    const t = await loadTerm()
-    if (state.bottom === 'terminal') {
-      acts.append(t.panelActions())
-      t.shown()
-    }
-  } else if (name === 'problems') refreshProblems()
-  saveSession()
-}
-
-function hideBottom() {
-  state.bottom = null
-  $('panel').hidden = true
-  $('panel-rz').hidden = true
-  document.querySelectorAll('[data-bottom]').forEach((b) => b.classList.remove('on'))
-  ed.focus()
-  saveSession()
+/** Shows a view of the panel; with `force` false, a view already shown is hidden. */
+function showBottom(name, force = true) {
+  return layout.show(name, { toggle: !force })
 }
 
 app.showLeft = showLeft
 app.showBottom = showBottom
-document.querySelectorAll('[data-left]').forEach((b) => b.addEventListener('click', () => showLeft(b.dataset.left)))
-document.querySelectorAll('[data-bottom]').forEach((b) => b.addEventListener('click', () => showBottom(b.dataset.bottom, false)))
-$('panel-x').addEventListener('click', hideBottom)
+app.isShown = layout.isShown
+app.setHeader = layout.setHeader
+reg('reset-layout', 'Reset Layout', null, () => layout.reset())
+reg('split-editor', 'Split Editor', 'C-\\', () => state.active !== null && toOtherGroup(state.active))
+reg('focus-other-group', 'Focus Other Editor Group', null, () => groups.length > 1 && focusGroup(1 - focusedGroup))
+reg('toggle-split-direction', 'Toggle Split Direction', null, () => {
+  groupsEl.classList.toggle('down')
+  store('split', { at: groupsEl.style.getPropertyValue('--split'), down: groupsEl.classList.contains('down') })
+})
 
 const recents = () => load('recent', [])
 
@@ -225,6 +235,7 @@ async function openProject(path) {
   await invoke('list_dir', { path, hidden: true })
   if (state.root) await closeProject()
   state.root = path
+  presence.sync()
   state.files = null
   store('recent', [path, ...recents().filter((p) => p !== path)].slice(0, 20))
   store('recentTime', { ...load('recentTime', {}), [path]: Date.now() })
@@ -241,19 +252,31 @@ async function openProject(path) {
   expanded.clear()
   for (const p of s.expanded ?? []) expanded.add(p)
   dirCache.clear()
-  await refreshTree()
-  await build.refreshTargets()
+  await Promise.all([refreshTree(), build.refreshTargets()])
   ed.measure()
   restoring = true
-  state.left = null
   showLeft(s.left ?? 'project', true)
   git.refresh()
-  await intel.startIntel()
+  // clangd takes a while to start. The files don't wait for it: they are handed over once it's up.
+  guard(intel.startIntel())
   for (const p of s.tabs ?? []) {
     if (await invoke('path_exists', { path: p })) await openFile(p, false).catch(() => {})
   }
   const active = state.tabs.find((t) => t.path === s.active) ?? state.tabs[0]
   if (active) activate(active.id)
+  // The second editor group, when the editor was split.
+  const split = s.split?.tabs ?? []
+  for (const p of split) {
+    if (!(await invoke('path_exists', { path: p }))) continue
+    const d = await invoke('doc_open', { path: p }).catch(() => null)
+    if (!d) continue
+    await ensureTab(d, splitGroup())
+  }
+  if (groups[1]?.ids.length) {
+    const a2 = state.tabs.find((t) => t.path === s.split.active && groups[1].ids.includes(t.id)) ?? tabOf(groups[1].ids[0])
+    activate(a2.id, 1)
+    if (active) activate(active.id, 0)
+  } else if (groups[1]) removeGroup(1)
   if (s.cursors) cursors = s.cursors
   for (const t of state.tabs) {
     const c = cursors[t.path]
@@ -267,12 +290,16 @@ async function openProject(path) {
 async function closeProject() {
   await saveAll()
   saveSession()
-  for (const t of [...state.tabs]) {
+  const closing = state.tabs.map((t) => {
     ed.forget(t.id)
-    await invoke('doc_close', { id: t.id })
-  }
+    return invoke('doc_close', { id: t.id })
+  })
+  await Promise.all(closing)
   state.tabs = []
   state.active = null
+  while (groups.length > 1) removeGroup(groups.length - 1)
+  groups[0].ids = []
+  groups[0].active = null
   ed.show(null)
   renderTabs()
   await intel.stopIntel()
@@ -284,8 +311,9 @@ let sessionTimer = 0
 
 function sessionSnapshot() {
   return {
-    tabs: state.tabs.filter((t) => !t.virtual).map((t) => t.path),
-    active: activeTab()?.path,
+    tabs: pathsOf(groups[0].ids),
+    active: tabOf(groups[0].active)?.path,
+    split: groups[1] ? { tabs: pathsOf(groups[1].ids), active: tabOf(groups[1].active)?.path } : null,
     expanded: [...expanded],
     left: state.left,
     bottom: state.bottom,
@@ -305,7 +333,9 @@ app.saveSession = saveSession
 
 function renderEmpty() {
   const row = (label, k) => [h('span', {}, label), h('kbd', {}, k)]
-  $('empty').replaceChildren(h('div', { class: 'keys' }, ...row('Open file', 'Ctrl P'), ...row('Find in project', 'Ctrl Shift F'), ...row('Every command', 'Ctrl Shift A'), ...row('Terminal', 'Alt F12')))
+  for (const el of document.querySelectorAll('.e-empty')) {
+    el.replaceChildren(h('div', { class: 'keys' }, ...row('Open file', 'Ctrl P'), ...row('Find in project', 'Ctrl Shift F'), ...row('Every command', 'Ctrl Shift A'), ...row('Split editor', 'Ctrl \\')))
+  }
 }
 
 const expanded = new Set()
@@ -323,6 +353,22 @@ async function refreshTree() {
   await loadDir(state.root)
   await Promise.all([...expanded].map((p) => loadDir(p).catch(() => expanded.delete(p))))
   renderTree()
+}
+
+/** Moves the highlight in the tree to the file being edited. Switching tabs used to rebuild
+ * every row of the tree, which takes a while once a few big folders are open. */
+function markTreeActive() {
+  const path = activeTab()?.path
+  const old = tree.querySelector('.row.on')
+  if (old?.dataset.path === path) return
+  old?.classList.remove('on')
+  if (!path) return
+  for (const row of tree.children) {
+    if (row.dataset.path === path) {
+      row.classList.add('on')
+      break
+    }
+  }
 }
 
 function renderTree() {
@@ -409,13 +455,34 @@ async function createEntry(dir, isDir) {
 async function renameEntry(path) {
   const name = await promptBox('Rename', basename(path), 'Rename')
   if (!name || name === basename(path)) return
-  const open = state.tabs.find((t) => t.path === path)
-  if (open?.dirty) return toast('Save the file before renaming it')
   try {
-    await invoke('fs_rename', { from: path, to: join(dirname(path), name) })
-    if (open) {
-      await forceCloseTab(open)
-      await openFile(join(dirname(path), name))
+    // Open files inside follow the rename with their unsaved changes, breakpoints and caret.
+    const to = join(dirname(path), name)
+    const moved = await invoke('fs_rename', { from: path, to })
+    for (const p of [...expanded]) {
+      if (p !== path && !p.startsWith(path + SEP)) continue
+      expanded.delete(p)
+      expanded.add(to + p.slice(path.length))
+    }
+    for (const m of moved) {
+      const t = state.tabs.find((t) => t.id === m.id)
+      if (!t) continue
+      if (state.bps.has(t.path)) {
+        state.bps.set(m.path, state.bps.get(t.path))
+        state.bps.delete(t.path)
+      }
+      if (cursors[t.path]) cursors[m.path] = cursors[t.path]
+      recent = recent.map((p) => (p === t.path ? m.path : p))
+      t.path = m.path
+      t.name = m.name
+      if (!t.virtual) invoke('git_refresh', { id: t.id }).catch(() => {})
+      intel.syncDoc(t.id)
+    }
+    if (moved.length) {
+      renderTabs()
+      renderPath()
+      saveSession()
+      if (state.active !== null) ed.repaint()
     }
     await afterFsChange(dirname(path))
   } catch (e) {
@@ -438,56 +505,202 @@ async function deleteEntry(path) {
   }
 }
 
-function renderTabs() {
-  $('tabs').replaceChildren(
-    ...state.tabs.map((t) =>
-      h(
-        'div',
-        {
-          class: 'tab' + (t.id === state.active ? ' on' : '') + (t.dirty ? ' dirty' : ''),
-          'data-id': t.id,
-          title: t.path,
-          onpointerdown: (e) => {
-            if (e.button === 1) {
-              e.preventDefault()
-              closeTab(t)
-            } else if (e.button === 0 && !e.target.closest('.dot')) {
-              navPush()
-              activate(t.id)
-            }
-          },
-          oncontextmenu: (e) => {
-            e.preventDefault()
-            showMenu(e.clientX, e.clientY, [
-              ['Close', () => closeTab(t), 'Ctrl+F4'],
-              ['Close Others', () => closeOthers(t)],
-              ['Close All', () => closeOthers(null)],
-              '-',
-              ['Copy Path', () => copyText(t.path)],
-              ['Show in Project', () => reveal(t.path), '', !t.virtual],
-            ])
-          },
-        },
-        fileIcon(t.name),
-        t.name,
-        h('span', { class: 'dot', onclick: () => closeTab(t) }, h('i', {}, '×')),
-      ),
-    ),
+// Editor groups, as in VS Code: the editor split in two, side by side (or one above the other).
+// Each group has its tabs and an editor of its own. state.tabs holds every open document, and
+// state.active the one shown in the group with the focus.
+const groups = [{ el: document.querySelector('.group'), ids: [], active: null }]
+let focusedGroup = 0
+const tabOf = (id) => state.tabs.find((t) => t.id === id)
+const pathsOf = (ids) => ids.map(tabOf).filter((t) => t && !t.virtual).map((t) => t.path)
+const groupsEl = $('groups')
+
+/** Fades the edges of a tab bar where more tabs are hidden past them. */
+function fadeTabs(el) {
+  const hidden = el.scrollWidth - el.clientWidth
+  el.classList.toggle('fade-l', hidden > 1 && el.scrollLeft > 1)
+  el.classList.toggle('fade-r', hidden > 1 && el.scrollLeft < hidden - 1)
+}
+function setupStrip(el) {
+  el.addEventListener('scroll', () => fadeTabs(el), { passive: true })
+  new ResizeObserver(() => fadeTabs(el)).observe(el)
+  // The wheel scrolls the tabs sideways, as in VS Code; a touchpad's sideways swipe still works.
+  el.addEventListener(
+    'wheel',
+    (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      e.preventDefault()
+      el.scrollLeft += e.deltaY
+    },
+    { passive: false },
   )
-  $('tabs').querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  const tabEls = [...$('tabs').querySelectorAll('.tab')]
-  const fresh = tabEls.filter((el) => !shownTabs.has(el.dataset.id))
-  shownTabs = new Set(state.tabs.map((t) => String(t.id)))
-  const now = performance.now()
-  if (fresh.length === 1) tabBorn.set(fresh[0].dataset.id, now)
-  // The tab list is drawn again right away, so the pop carries on from where it was.
-  for (const el of tabEls) {
-    const born = tabBorn.get(el.dataset.id)
-    if (born === undefined) continue
-    if (now - born > 180 || document.documentElement.dataset.fxUi !== 'on') tabBorn.delete(el.dataset.id)
-    else el.animate([{ opacity: 0, transform: 'translateY(5px) scale(.95)' }, { opacity: 1, transform: 'none' }], { duration: 180, delay: -(now - born), easing: 'cubic-bezier(.2, .7, .2, 1)', fill: 'backwards' })
+}
+setupStrip(groups[0].el.querySelector('.tabs'))
+
+/** Gives the focus to group `g`: its editor gets the keys, the popups and the find bar. */
+function focusGroup(g, focusEditor = true) {
+  const G = groups[g]
+  if (!G) return
+  if (focusedGroup !== g) intel.hidePopups()
+  focusedGroup = g
+  ed.use(g)
+  state.active = G.active
+  const pane = ed.host()
+  for (const id of ['completion', 'hover', 'sig']) pane.appendChild($(id))
+  G.el.insertBefore($('findbar'), pane)
+  groups.forEach((x, i) => x.el.classList.toggle('focused', i === g && groups.length > 1))
+  if (focusEditor) ed.focus()
+}
+ed.onFocusChange((g) => {
+  focusGroup(g, false)
+  renderTabs()
+  markTreeActive()
+  if (state.active !== null) ed.repaint()
+})
+
+/** Splits the editor: a second group, beside the first (or under it). */
+function splitGroup() {
+  if (groups.length > 1) return 1
+  const rz = h('div', { class: 'group-rz' })
+  const el = h('div', { class: 'group' }, h('div', { class: 'tabs' }))
+  groupsEl.append(rz, el)
+  setupStrip(el.querySelector('.tabs'))
+  ed.addEditor(el)
+  groups.push({ el, ids: [], active: null })
+  dragGroups(rz)
+  renderEmpty()
+  return 1
+}
+
+function removeGroup(g) {
+  if (groups.length < 2) return
+  const other = g === 0 ? 1 : 0
+  focusGroup(other, false)
+  const [G] = groups.splice(g, 1)
+  const rz = groupsEl.querySelector('.group-rz')
+  ed.removeEditor(g)
+  G.el.remove()
+  rz?.remove()
+  focusGroup(0, false)
+  groups[0].el.classList.remove('focused')
+}
+
+/** Opens `id` in the other group (splitting the editor if needed); with `move`, it leaves this one. */
+function toOtherGroup(id, move = false) {
+  const from = groups.findIndex((G) => G.ids.includes(id) && G.active === id)
+  const src = from === -1 ? focusedGroup : from
+  const to = groups.length > 1 ? 1 - src : splitGroup()
+  activate(id, to)
+  if (move) detach(id, src)
+}
+
+/** Takes `id` out of group `g` only; the document stays open in the other group. */
+function detach(id, g) {
+  const G = groups[g]
+  const i = G.ids.indexOf(id)
+  if (i === -1) return
+  G.ids.splice(i, 1)
+  if (!G.ids.length && groups.length > 1) {
+    removeGroup(g)
+  } else if (G.active === id) {
+    const next = G.ids[Math.min(i, G.ids.length - 1)] ?? null
+    G.active = null
+    if (next !== null) activate(next, g)
+    else ed.editorAt(g).show(null)
   }
+  renderTabs()
+  saveSession()
+}
+
+function dragGroups(rz) {
+  rz.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    rz.setPointerCapture(e.pointerId)
+    const move = (ev) => {
+      const r = groupsEl.getBoundingClientRect()
+      const down = groupsEl.classList.contains('down')
+      const f = down ? (ev.clientY - r.top) / r.height : (ev.clientX - r.left) / r.width
+      groupsEl.style.setProperty('--split', Math.round(Math.max(0.15, Math.min(0.85, f)) * 1000) / 10 + '%')
+    }
+    const up = () => {
+      rz.removeEventListener('pointermove', move)
+      rz.removeEventListener('pointerup', up)
+      store('split', { at: groupsEl.style.getPropertyValue('--split'), down: groupsEl.classList.contains('down') })
+    }
+    rz.addEventListener('pointermove', move)
+    rz.addEventListener('pointerup', up)
+  })
+}
+{
+  const saved = load('split', null)
+  if (saved?.at) groupsEl.style.setProperty('--split', saved.at)
+  groupsEl.classList.toggle('down', !!saved?.down)
+}
+
+function tabEl(t, g) {
+  const G = groups[g]
+  return h(
+    'div',
+    {
+      class: 'tab' + (t.id === G.active ? ' on' : '') + (t.dirty ? ' dirty' : ''),
+      'data-id': t.id,
+      title: t.path,
+      onpointerdown: (e) => {
+        if (e.button === 1) {
+          e.preventDefault()
+          closeTab(t, g)
+        } else if (e.button === 0 && !e.target.closest('.dot')) {
+          navPush()
+          activate(t.id, g)
+        }
+      },
+      oncontextmenu: (e) => {
+        e.preventDefault()
+        const other = groups.length > 1
+        showMenu(e.clientX, e.clientY, [
+          ['Close', () => closeTab(t, g), 'Ctrl+F4'],
+          ['Close Others', () => closeOthers(t, g)],
+          ['Close All', () => closeOthers(null, g)],
+          '-',
+          [other ? 'Open in Other Group' : 'Split Right', () => toOtherGroup(t.id), 'Ctrl+\\'],
+          ['Move to Other Group', () => toOtherGroup(t.id, true), '', other || G.ids.length > 1],
+          '-',
+          ['Copy Path', () => copyText(t.path)],
+          ['Show in Project', () => reveal(t.path), '', !t.virtual],
+        ])
+      },
+    },
+    fileIcon(t.name),
+    t.name,
+    h('span', { class: 'dot', onclick: () => closeTab(t, g) }, h('i', {}, '×')),
+  )
+}
+
+function renderTabs() {
+  presence.sync()
+  const now = performance.now()
+  const seen = new Set()
+  groups.forEach((G, g) => {
+    G.ids = G.ids.filter((id) => tabOf(id))
+    const strip = G.el.querySelector('.tabs')
+    strip.replaceChildren(...G.ids.map((id) => tabEl(tabOf(id), g)))
+    strip.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    fadeTabs(strip)
+    const tabEls = [...strip.querySelectorAll('.tab')]
+    const fresh = tabEls.filter((el) => !shownTabs.has(g + ':' + el.dataset.id))
+    for (const el of tabEls) seen.add(g + ':' + el.dataset.id)
+    if (fresh.length === 1) tabBorn.set(g + ':' + fresh[0].dataset.id, now)
+    // The tab list is drawn again right away, so the pop carries on from where it was.
+    for (const el of tabEls) {
+      const key = g + ':' + el.dataset.id
+      const born = tabBorn.get(key)
+      if (born === undefined) continue
+      if (now - born > 180 || document.documentElement.dataset.fxUi !== 'on') tabBorn.delete(key)
+      else el.animate([{ opacity: 0, transform: 'translateY(5px) scale(.95)' }, { opacity: 1, transform: 'none' }], { duration: 180, delay: -(now - born), easing: 'cubic-bezier(.2, .7, .2, 1)', fill: 'backwards' })
+    }
+  })
+  shownTabs = seen
   renderPath()
+  chatMod?.syncFile?.()
 }
 let shownTabs = new Set()
 const tabBorn = new Map()
@@ -551,18 +764,23 @@ async function reveal(path) {
   tree.querySelector('.on')?.scrollIntoView({ block: 'nearest' })
 }
 
-function activate(id) {
-  if (state.active === id) {
+/** Shows `id` in group `g` (the one with the focus by default), adding its tab there if needed. */
+function activate(id, g = focusedGroup) {
+  const G = groups[g]
+  if (!G.ids.includes(id)) G.ids.push(id)
+  if (focusedGroup === g && G.active === id && state.active === id) {
     ed.focus()
     return
   }
   intel.hidePopups()
+  focusGroup(g, false)
+  G.active = id
   state.active = id
   ed.show(id)
   renderTabs()
-  renderTree()
+  markTreeActive()
   if (findOpen) runSearch()
-  if (state.left === 'structure') refreshStructure()
+  if (layout.isShown('structure')) refreshStructure()
   const t = activeTab()
   if (t && !t.virtual) {
     recent = [t.path, ...recent.filter((p) => p !== t.path)].slice(0, 30)
@@ -571,8 +789,9 @@ function activate(id) {
   saveSession()
 }
 
-async function ensureTab(d) {
+async function ensureTab(d, g = focusedGroup) {
   let tab = state.tabs.find((t) => t.id === d.id)
+  if (!groups[g].ids.includes(d.id)) groups[g].ids.push(d.id)
   if (!tab) {
     tab = { ...d, dirty: false }
     state.tabs.push(tab)
@@ -637,26 +856,41 @@ async function jumpTo(path, line, col) {
   await placeCaret(path, line, col)
 }
 
+/** Closes a document everywhere: in every group, and in the backend. */
 async function forceCloseTab(t) {
-  const i = state.tabs.indexOf(t)
-  state.tabs.splice(i, 1)
+  state.tabs.splice(state.tabs.indexOf(t), 1)
   ed.forget(t.id)
   await invoke('doc_close', { id: t.id })
-  if (state.active === t.id) {
-    state.active = null
-    const next = state.tabs[Math.min(i, state.tabs.length - 1)]
-    if (next) activate(next.id)
+  for (let g = groups.length - 1; g >= 0; g--) {
+    const G = groups[g]
+    const i = G.ids.indexOf(t.id)
+    if (i === -1) continue
+    G.ids.splice(i, 1)
+    if (!G.ids.length && groups.length > 1) {
+      removeGroup(g)
+      continue
+    }
+    if (G.active !== t.id) continue
+    G.active = null
+    const next = G.ids[Math.min(i, G.ids.length - 1)]
+    if (next !== undefined) activate(next, g)
     else {
-      ed.show(null)
-      setStatusEmpty()
+      ed.editorAt(g).show(null)
+      if (g === focusedGroup) {
+        state.active = null
+        setStatusEmpty()
+      }
     }
   }
+  if (groups[focusedGroup]) focusGroup(focusedGroup, false)
   renderTabs()
-  renderTree()
+  markTreeActive()
   saveSession()
 }
 
-async function closeTab(t) {
+/** Closes the tab of `t` in group `g`. Only when no other group shows it is the document closed. */
+async function closeTab(t, g = focusedGroup) {
+  if (groups.some((G, i) => i !== g && G.ids.includes(t.id))) return detach(t.id, g)
   if (t.dirty) {
     const save = await confirmBox(`Save ${t.name}?`, 'Your changes will be lost if you close without saving.', 'Save', 'Discard')
     if (save && !(await saveTab(t))) return
@@ -664,13 +898,16 @@ async function closeTab(t) {
   await forceCloseTab(t)
 }
 
-async function closeOthers(keep) {
-  for (const t of state.tabs.filter((x) => x !== keep)) await closeTab(t)
+async function closeOthers(keep, g = focusedGroup) {
+  for (const id of groups[g].ids.filter((x) => x !== keep?.id)) {
+    const t = tabOf(id)
+    if (t) await closeTab(t, g)
+  }
 }
 
 let gitTimer = 0
 
-async function saveTab(t, { force = false, quiet = false } = {}) {
+async function saveTab(t, { force = false, quiet = false, unlock = false } = {}) {
   if (t.virtual) return true
   await ed.idle()
   try {
@@ -678,7 +915,7 @@ async function saveTab(t, { force = false, quiet = false } = {}) {
       await ed.docCommand(t.id, [{ t: 'tidy', trim: settings.trimSave, newline: settings.newlineSave }])
       await ed.idle()
     }
-    const ok = await invoke('doc_save', { id: t.id, force })
+    const ok = await invoke('doc_save', { id: t.id, force, unlock })
     if (!ok) {
       if (quiet) return false
       const yes = await confirmBox(`${t.name} changed on disk`, 'Another program modified this file. Overwrite it with your version?', 'Overwrite')
@@ -691,9 +928,16 @@ async function saveTab(t, { force = false, quiet = false } = {}) {
     if (t.id === state.active) ed.repaint()
     clearTimeout(gitTimer)
     gitTimer = setTimeout(() => git.refresh(), 300)
-    if (state.left === 'structure' && t.id === state.active) refreshStructure()
+    if (layout.isShown('structure') && t.id === state.active) refreshStructure()
     return true
   } catch (e) {
+    // A read-only file: as in VS Code, saving it anyway makes it writable. Saving on its own,
+    // when the window loses focus, doesn't ask and doesn't say it again each time.
+    if (String(e).includes('is read-only')) {
+      if (quiet) return false
+      const yes = await confirmBox(`${t.name} is read-only`, 'Make it writable and save your changes?', 'Overwrite')
+      return yes ? saveTab(t, { force, unlock: true }) : false
+    }
     toast(e)
     return false
   }
@@ -708,11 +952,14 @@ async function saveAll(quiet = false) {
 app.saveAll = saveAll
 
 async function syncDirty() {
-  for (const t of state.tabs) {
-    if (t.id === state.active) continue
-    const v = await invoke('doc_apply', { id: t.id, cmds: [], top: 0, rows: 1, reveal: false }).catch(() => null)
-    if (v) t.dirty = v.dirty
-  }
+  await Promise.all(
+    state.tabs
+      .filter((t) => t.id !== state.active)
+      .map(async (t) => {
+        const v = await invoke('doc_apply', { id: t.id, cmds: [], top: 0, rows: 1, reveal: false }).catch(() => null)
+        if (v) t.dirty = v.dirty
+      }),
+  )
   renderTabs()
 }
 
@@ -800,7 +1047,7 @@ listen('diag', (e) => {
   requestSemantic(e.payload)
   clearTimeout(problemsTimer)
   problemsTimer = setTimeout(refreshProblems, 300)
-  if (state.left === 'structure' && e.payload === state.active) refreshStructure()
+  if (layout.isShown('structure') && e.payload === state.active) refreshStructure()
 })
 
 $('st-diag').addEventListener('click', () => showBottom('problems'))
@@ -808,7 +1055,7 @@ $('st-diag').addEventListener('click', () => showBottom('problems'))
 let structureToken = 0
 
 async function refreshStructure() {
-  if (state.left !== 'structure') return
+  if (!layout.isShown('structure')) return
   const el = $('v-structure')
   const id = state.active
   if (id === null || state.lsp !== 'on') {
@@ -839,7 +1086,7 @@ function groupHits(el, groups, renderHit) {
 }
 
 async function refreshProblems() {
-  if (state.bottom !== 'problems') return
+  if (!layout.isShown('problems')) return
   const el = $('v-problems')
   const groups = new Map()
   for (const t of state.tabs) {
@@ -865,8 +1112,7 @@ function showHits(title, sub, hits, header = null) {
   showBottom('find')
   const el = $('v-find')
   el.replaceChildren(...(header ? [header] : []))
-  $('panel-title').textContent = title
-  $('panel-sub').textContent = sub
+  layout.setHeader('find', title, sub)
   const groups = new Map()
   for (const x of hits) {
     if (!groups.has(x.path)) groups.set(x.path, [])
@@ -1030,22 +1276,15 @@ async function gotoLine() {
 
 const openSettings = (section) => settingsPage.open(typeof section === 'string' ? section : undefined)
 app.openSettings = openSettings
-async function toggleChat(on = state.right !== 'chat') {
+async function toggleChat(on = !layout.isShown('chat')) {
   if (on && !settings.aiChat) return toast('Turn on AI chat in Settings > AI')
-  state.right = on ? 'chat' : null
-  $('right').hidden = $('right-rz').hidden = !on
-  $('rail-chat').classList.toggle('on', on)
-  $('chat-toggle').classList.toggle('on', on)
-  store('chatOpen', on)
-  if (!on) return ed.focus()
-  const c = await loadChat()
-  $('right-actions').replaceChildren(c.panelActions())
-  c.shown()
+  if (on) await layout.show('chat')
+  else layout.close('chat')
 }
 app.toggleChat = toggleChat
 app.syncChat = () => {
-  $('rail-chat').hidden = !settings.aiChat
-  if (!settings.aiChat && state.right) toggleChat(false)
+  layout.refreshRail()
+  if (!settings.aiChat) layout.close('chat')
 }
 /** The button and Alt+8: turn the chat on if it is off, then open or close it. */
 function chatButton() {
@@ -1055,11 +1294,9 @@ function chatButton() {
     closeNote('ai')
     app.syncChat()
   }
-  return toggleChat(state.right !== 'chat')
+  return toggleChat(!layout.isShown('chat'))
 }
 $('chat-toggle').addEventListener('click', chatButton)
-$('rail-chat').addEventListener('click', () => toggleChat())
-$('right-x').addEventListener('click', () => toggleChat(false))
 
 function quickTheme() {
   palette({
@@ -1098,6 +1335,7 @@ reg('close-tab', 'Close Tab', 'C-F4', activeDo(closeTab))
 reg('close-project', 'Close Project', null, async () => {
   await closeProject()
   state.root = null
+  presence.sync()
   $('work').hidden = true
   $('status').hidden = true
   $('run-tools').hidden = true
@@ -1427,7 +1665,7 @@ drag($('side-rz'), '--side', 140, () => innerWidth * 0.5, (e) => e.clientX)
 drag($('right-rz'), '--right', 280, () => innerWidth * 0.6, (e) => innerWidth - e.clientX - 5)
 drag($('panel-rz'), '--panel', 90, () => innerHeight - 180, (e) => innerHeight - 22 - e.clientY)
 
-if (SEP === '\\') for (const el of document.querySelectorAll('#debug, [data-bottom="debug"]')) el.hidden = true
+if (SEP === '\\') $('debug').hidden = true
 
 async function start() {
   root.dataset.focus = ''
@@ -1435,15 +1673,14 @@ async function start() {
   if (layout?.side) root.style.setProperty('--side', layout.side)
   if (layout?.panel) root.style.setProperty('--panel', layout.panel)
   if (layout?.right) root.style.setProperty('--right', layout.right)
-  await document.fonts.load('13px "JetBrains Mono Variable"').catch(() => {})
-  state.sys = await invoke('sys_info')
+  const [, sys, arg] = await Promise.all([document.fonts.load('13px "JetBrains Mono Variable"').catch(() => {}), invoke('sys_info'), invoke('initial_path')])
+  state.sys = sys
   applyLook()
   const w = load('window', null)
   if (w?.max) await win.maximize().catch(() => {})
   else if (w?.w >= 640 && w?.h >= 400) await win.setSize(new window.__TAURI__.window.LogicalSize(w.w, w.h)).catch(() => {})
   renderHome()
   intel.setLsp('off')
-  const arg = await invoke('initial_path')
   if (arg) {
     await guard(openProject(arg.root))
     if (arg.file) await guard(openFile(arg.file))

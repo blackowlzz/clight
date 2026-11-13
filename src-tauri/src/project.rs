@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -50,7 +51,14 @@ pub fn list_dir(path: &str, hidden: bool) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
-fn walk(root: &Path, visit: &mut dyn FnMut(&Path, &fs::Metadata) -> bool) {
+/// Visits the files of a project, folders like `build` and `.git` left out. The visitor gets
+/// the path and the entry, and asks for the metadata only when it needs the size: listing
+/// files doesn't, and one less call per file shows on big trees.
+fn size(e: &fs::DirEntry) -> Option<u64> {
+    e.metadata().ok().map(|m| m.len())
+}
+
+fn walk(root: &Path, visit: &mut dyn FnMut(&Path, &fs::DirEntry) -> bool) {
     let mut stack = vec![root.to_path_buf()];
     let mut seen = 0;
     while let Some(dir) = stack.pop() {
@@ -65,8 +73,7 @@ fn walk(root: &Path, visit: &mut dyn FnMut(&Path, &fs::Metadata) -> bool) {
                 }
             } else if ty.is_file() {
                 seen += 1;
-                let Ok(meta) = e.metadata() else { continue };
-                if seen > MAX_WALK || !visit(&e.path(), &meta) {
+                if seen > MAX_WALK || !visit(&e.path(), &e) {
                     return;
                 }
             }
@@ -80,14 +87,16 @@ pub fn source_texts(root: &str) -> Vec<(PathBuf, String)> {
     const MAX_BYTES: usize = 3 << 20;
     let mut out = vec![];
     let mut total = 0usize;
-    walk(Path::new(root), &mut |p, meta| {
+    walk(Path::new(root), &mut |p, e| {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx")
-            || meta.len() > 256 << 10
-        {
+        if !matches!(ext, "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx") {
             return true;
         }
-        if out.len() >= MAX_FILES || total + meta.len() as usize > MAX_BYTES {
+        let Some(len) = size(e) else { return true };
+        if len > 256 << 10 {
+            return true;
+        }
+        if out.len() >= MAX_FILES || total + len as usize > MAX_BYTES {
             return false;
         }
         if let Ok(text) = fs::read_to_string(p) {
@@ -122,45 +131,83 @@ pub struct Hit {
 }
 
 pub fn grep(root: &str, query: &str) -> Vec<Hit> {
-    let mut hits = vec![];
     let needle = query.to_lowercase();
     if needle.is_empty() {
-        return hits;
+        return vec![];
     }
     let base = Path::new(root);
-    walk(base, &mut |p, meta| {
-        if meta.len() > MAX_GREP_FILE {
-            return true;
-        }
-        let Ok(bytes) = fs::read(p) else { return true };
-        if bytes.iter().take(4096).any(|b| *b == 0) {
-            return true;
-        }
-        let Ok(text) = std::str::from_utf8(&bytes) else {
-            return true;
-        };
-        for (i, l) in text.lines().enumerate() {
-            let lower = l.to_lowercase();
-            if let Some(b) = lower.find(&needle) {
-                hits.push(Hit {
-                    path: p.to_string_lossy().into_owned(),
-                    rel: p
-                        .strip_prefix(base)
-                        .unwrap_or(p)
-                        .to_string_lossy()
-                        .into_owned(),
-                    line: i,
-                    col: lower[..b].encode_utf16().count(),
-                    text: l.trim().chars().take(160).collect(),
-                });
-                if hits.len() >= MAX_GREP_HITS {
-                    return false;
-                }
-            }
+    let mut files = vec![];
+    walk(base, &mut |p, e| {
+        if size(e).is_some_and(|n| n <= MAX_GREP_FILE) {
+            files.push(p.to_path_buf());
         }
         true
     });
+    // The files are shared out between a few threads. Each takes the next file in order, and
+    // they stop taking more once enough was found; every file before the last one taken has
+    // then been read in full, so the first hits in the order of the walk are the same as when
+    // going through the files one by one.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let found = std::sync::atomic::AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+    let mut all: Vec<(usize, Hit)> = std::thread::scope(|sc| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                sc.spawn(|| {
+                    let mut mine = vec![];
+                    while found.load(std::sync::atomic::Ordering::Relaxed) < MAX_GREP_HITS {
+                        let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(p) = files.get(k) else { break };
+                        let hits = grep_file(base, p, &needle);
+                        found.fetch_add(hits.len(), std::sync::atomic::Ordering::Relaxed);
+                        mine.extend(hits.into_iter().map(|h| (k, h)));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+    });
+    all.sort_by_key(|(k, h)| (*k, h.line));
+    all.truncate(MAX_GREP_HITS);
+    let mut hits: Vec<Hit> = all.into_iter().map(|(_, h)| h).collect();
     hits.sort_by(|a, b| (&a.rel, a.line).cmp(&(&b.rel, b.line)));
+    hits
+}
+
+fn grep_file(base: &Path, p: &Path, needle: &str) -> Vec<Hit> {
+    let mut hits = vec![];
+    let Ok(bytes) = fs::read(p) else { return hits };
+    if bytes.iter().take(4096).any(|b| *b == 0) {
+        return hits;
+    }
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return hits;
+    };
+    // Code is nearly always ASCII. Then lowering the whole file once gives, line by line,
+    // exactly what lowering each line would, and a file without the query is passed over
+    // without looking at its lines at all.
+    let ascii = needle.is_ascii() && text.is_ascii();
+    let lowered = if ascii { text.to_ascii_lowercase() } else { String::new() };
+    if ascii && !lowered.contains(needle) {
+        return hits;
+    }
+    let mut lower_lines = lowered.lines();
+    for (i, l) in text.lines().enumerate() {
+        let lower: Cow<str> = if ascii { Cow::Borrowed(lower_lines.next().unwrap_or("")) } else { Cow::Owned(l.to_lowercase()) };
+        if let Some(b) = lower.find(needle) {
+            hits.push(Hit {
+                path: p.to_string_lossy().into_owned(),
+                rel: p.strip_prefix(base).unwrap_or(p).to_string_lossy().into_owned(),
+                line: i,
+                col: lower[..b].encode_utf16().count(),
+                text: l.trim().chars().take(160).collect(),
+            });
+            if hits.len() >= MAX_GREP_HITS {
+                break;
+            }
+        }
+    }
     hits
 }
 
@@ -359,9 +406,9 @@ pub fn sys_info() -> Sys {
     }
 }
 
-/// Where `needle` (already lowercase) is in `hay`, ignoring case.
-fn find_ci(hay: &str, needle: &str, from: usize) -> Option<(usize, usize)> {
-    let lower = hay.to_lowercase();
+/// Where `needle` (already lowercase) is in `hay`, ignoring case. `lower` is `hay` in
+/// lowercase, worked out once by the caller: doing it here, for each match, was quadratic.
+fn find_ci(hay: &str, lower: &str, needle: &str, from: usize) -> Option<(usize, usize)> {
     if lower.len() == hay.len() {
         return lower[from..].find(needle).map(|i| (from + i, from + i + needle.len()));
     }
@@ -382,8 +429,8 @@ pub fn replace_all(root: &str, query: &str, with: &str, skip: &[PathBuf]) -> Res
     let base = Path::new(root);
     let (mut files, mut places) = (0, 0);
     let mut failure: Option<String> = None;
-    walk(base, &mut |p, meta| {
-        if meta.len() > MAX_GREP_FILE || skip.iter().any(|s| s == p) {
+    walk(base, &mut |p, e| {
+        if size(e).is_none_or(|n| n > MAX_GREP_FILE) || skip.iter().any(|s| s == p) {
             return true;
         }
         let Ok(bytes) = fs::read(p) else { return true };
@@ -391,9 +438,17 @@ pub fn replace_all(root: &str, query: &str, with: &str, skip: &[PathBuf]) -> Res
             return true;
         }
         let Ok(text) = String::from_utf8(bytes) else { return true };
+        let lower = text.to_lowercase();
+        if lower.len() == text.len() && !lower.contains(&needle) {
+            return true;
+        }
+        // Replacing would get around the permissions of a read-only file, as saving would.
+        if fs::metadata(p).is_ok_and(|m| m.permissions().readonly()) {
+            return true;
+        }
         let mut out = String::with_capacity(text.len());
         let (mut at, mut n) = (0, 0);
-        while let Some((s, e)) = find_ci(&text, &needle, at) {
+        while let Some((s, e)) = find_ci(&text, &lower, &needle, at) {
             out.push_str(&text[at..s]);
             out.push_str(with);
             at = e;
@@ -434,6 +489,40 @@ mod replace_tests {
     use super::*;
 
     #[test]
+    fn grep_finds_the_same_in_ascii_and_other_files() {
+        let dir = std::env::temp_dir().join(format!("proj-grep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.c"), "int Foo;\r\nfoo(); // FOO\nnone\n").unwrap();
+        fs::write(dir.join("b.c"), "é Foo\nnone\nÉFOO\n").unwrap();
+        fs::write(dir.join("c.c"), "nothing here\n").unwrap();
+        let hits = grep(dir.to_str().unwrap(), "foo");
+        let got: Vec<(String, usize, usize)> = hits.iter().map(|h| (h.rel.clone(), h.line, h.col)).collect();
+        assert_eq!(got, vec![("a.c".into(), 0, 4), ("a.c".into(), 1, 0), ("b.c".into(), 0, 2), ("b.c".into(), 2, 1)]);
+        assert!(grep(dir.to_str().unwrap(), "missing").is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Like saving, replacing must not get around a file's permissions.
+    #[test]
+    fn replacing_leaves_read_only_files_alone() {
+        let dir = std::env::temp_dir().join(format!("proj-ro-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.txt");
+        fs::write(&f, "foo").unwrap();
+        let mut perm = fs::metadata(&f).unwrap().permissions();
+        perm.set_readonly(true);
+        fs::set_permissions(&f, perm.clone()).unwrap();
+        assert_eq!(replace_all(dir.to_str().unwrap(), "foo", "bar", &[]).unwrap(), (0, 0));
+        assert_eq!(fs::read_to_string(&f).unwrap(), "foo");
+        #[allow(clippy::permissions_set_readonly_false)]
+        perm.set_readonly(false);
+        let _ = fs::set_permissions(&f, perm);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn replacing_in_the_project_ignores_case_and_keeps_line_endings() {
         let dir = std::env::temp_dir().join(format!("proj-replace-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -448,7 +537,7 @@ mod replace_tests {
         let skipped = dir.join("src/a.txt");
         fs::write(&skipped, "foo").unwrap();
         assert_eq!(replace_all(dir.to_str().unwrap(), "foo", "x", std::slice::from_ref(&skipped)).unwrap(), (0, 0));
-        assert_eq!(find_ci("İfoo", "foo", 0), Some((2, 5)));
+        assert_eq!(find_ci("İfoo", &"İfoo".to_lowercase(), "foo", 0), Some((2, 5)));
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -22,6 +22,15 @@ const fileChip = h('button', {
     fileChip.setAttribute('aria-pressed', String(fileOn))
   },
 }, 'Open file')
+/** The chip names the file that goes with the question: the one of the editor you were last in,
+ * which matters once the editor is split in two. */
+export function syncFile() {
+  const t = state.tabs.find((x) => x.id === state.active)
+  fileChip.textContent = t ? t.name : 'No file open'
+  fileChip.disabled = !t
+  fileChip.title = t ? `Send ${t.name} along with your question (the file of the editor you were last in)` : 'Open a file to send it along'
+}
+syncFile()
 const box = h('div', { class: 'chat-box' }, input, h('div', { class: 'chat-foot' }, fileChip, h('span', { class: 'grow' }), h('span', { class: 'chat-hint' }, 'Enter to send'), sendBtn))
 view.replaceChildren(log, h('div', { class: 'chat-composer' }, box, note))
 

@@ -326,8 +326,9 @@ mod leftover_tests {
         let dir = std::env::temp_dir().join(format!("leftover-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut child = Command::new("sleep").arg("4321").spawn().unwrap();
-        // Until it has become `sleep`, /proc still shows the program that started it.
-        for _ in 0..200 {
+        // Until it has become `sleep`, /proc still shows the program that started it. On a busy
+        // machine (the whole test suite at once) that can take a few seconds.
+        for _ in 0..1000 {
             let exe = std::fs::read_link(format!("/proc/{}/exe", child.id())).ok();
             if exe.is_some_and(|p| p.file_name().is_some_and(|n| n == "sleep")) {
                 break;
@@ -346,7 +347,7 @@ mod leftover_tests {
         std::fs::write(&pid_file, child.id().to_string()).unwrap();
         end_leftover(&pid_file, "sleep", std::path::Path::new("4321"));
         let mut ended = false;
-        for _ in 0..300 {
+        for _ in 0..1000 {
             if child.try_wait().unwrap().is_some() {
                 ended = true;
                 break;

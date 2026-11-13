@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
 pub const MAX_RENDER: usize = 4000;
+const CLIP_MAX: usize = 256 << 10;
 const MAX_UNDO_BYTES: usize = 8 << 20;
 const OVERSCAN: usize = 30;
 const COALESCE_MS: u128 = 900;
@@ -250,7 +251,17 @@ pub struct Doc {
     undo_bytes: usize,
     open_ops: Vec<Op>,
     before: (usize, usize),
+    /// The state each line starts in, as far as it was worked out, kept across changes the way
+    /// VS Code does (textModelTokens.ts). `check[k]` says line k - 1 changed since, so `states[k]`
+    /// must be worked out again; the others follow from the one before. Only the first `valid`
+    /// are sure. Working a state out again and finding it as it was stops there: the lines after
+    /// are left as they are, however many changes there were and wherever they are.
     states: Vec<u32>,
+    check: Vec<bool>,
+    valid: usize,
+    /// How many lines were gone through only to know the state of the next one, for the tests.
+    #[cfg(test)]
+    worked: usize,
     raws: Vec<String>,
     query: String,
     case: bool,
@@ -265,6 +276,18 @@ pub struct Doc {
     sel_stack: Vec<(usize, usize)>,
     sem: Vec<SemLine>,
     pair_cache: Option<PairCache>,
+}
+
+/// The part of a line that is drawn (see `MAX_RENDER`). Marks further on would not show, and
+/// looking for them on a line of megabytes costs a lot at every key.
+fn drawn(text: &str) -> &str {
+    text.char_indices().nth(MAX_RENDER + 64).map_or(text, |(b, _)| &text[..b])
+}
+
+/// Whether `i` falls in one of `ranges`, which are in order and don't overlap.
+fn in_ranges(ranges: &[(usize, usize)], i: usize) -> bool {
+    let k = ranges.partition_point(|&(a, _)| a <= i);
+    k > 0 && i < ranges[k - 1].1
 }
 
 fn is_word(c: char) -> bool {
@@ -319,6 +342,10 @@ impl Doc {
             open_ops: vec![],
             before: (0, 0),
             states: vec![0],
+            check: vec![false],
+            valid: 1,
+            #[cfg(test)]
+            worked: 0,
             raws: vec![],
             query: String::new(),
             case: false,
@@ -333,6 +360,54 @@ impl Doc {
             sel_stack: vec![],
             sem: vec![],
             pair_cache: None,
+        }
+    }
+
+    /// What must hold between any two commands. The fuzz test checks it after each one.
+    #[cfg(test)]
+    pub fn check(&self) -> Result<(), String> {
+        let n = self.rope.len_chars();
+        let lines = self.rope.len_lines();
+        if self.cur > n || self.anchor > n {
+            return Err(format!("caret {} / anchor {} past the end ({n})", self.cur, self.anchor));
+        }
+        if let Some((s, e)) = self.folds.iter().find(|(s, e)| s >= e || *e >= lines) {
+            return Err(format!("fold {s}..{e} with {lines} lines"));
+        }
+        if let Some((a, b)) = self.sel_stack.iter().find(|(a, b)| *a > n || *b > n) {
+            return Err(format!("selection stack {a}..{b} past the end ({n})"));
+        }
+        Ok(())
+    }
+
+    /// The file was renamed or its folder moved. The text, its unsaved changes and the undo
+    /// history stay; the colors follow the new name, as a .txt renamed to .cpp should.
+    pub fn moved_to(&mut self, path: PathBuf) {
+        self.lang = Lang::from_path(&path);
+        self.path = path;
+        self.reset_states();
+        self.sem.clear();
+        self.diags.clear();
+        self.lsp_rev = None;
+        self.pair_cache = None;
+    }
+
+    /// What Ctrl+C copies: the selection, or the caret's line when nothing is selected.
+    pub fn clip_text(&self) -> String {
+        let (a, b) = self.sel_range();
+        if a != b {
+            self.rope.slice(a..b).to_string()
+        } else {
+            format!("{}\n", self.line_text(self.pos(self.cur).0))
+        }
+    }
+
+    fn clip_len(&self) -> usize {
+        let (a, b) = self.sel_range();
+        if a != b {
+            self.rope.char_to_byte(b) - self.rope.char_to_byte(a)
+        } else {
+            self.rope.line(self.pos(self.cur).0).len_bytes() + 1
         }
     }
 
@@ -363,10 +438,11 @@ impl Doc {
         self.undo_bytes = 0;
         self.folds.clear();
         self.sem.clear();
-        self.states.truncate(1);
+        self.reset_states();
         self.rev += 1;
         self.saved_rev = self.rev;
         self.sent_clip = None;
+        self.sel_stack.clear();
         self.cur = self.at(line, col);
         self.anchor = self.cur;
     }
@@ -842,11 +918,14 @@ impl Doc {
     }
 
     fn vcol(&self, line: usize, col: usize) -> usize {
-        self.rope
-            .line(line)
-            .chars()
-            .take(col)
-            .fold(0, |v, c| self.step(v, c))
+        let s = self.rope.line(line);
+        let s = s.slice(..col.min(s.len_chars()));
+        // Without tabs every character is one column. Looking for a tab is much faster than
+        // walking the characters, which matters on a minified file with megabytes on one line.
+        if s.chunks().all(|c| !c.contains('\t')) {
+            return s.len_chars();
+        }
+        s.chars().fold(0, |v, c| self.step(v, c))
     }
 
     fn col_from_vcol(&self, line: usize, target: usize) -> usize {
@@ -949,6 +1028,10 @@ impl Doc {
     }
 
     fn edit(&mut self, a: usize, b: usize, ins: &str) {
+        // A range that is backwards or past the end (a stale reply from clangd, say) must not
+        // panic: that would close the app with the unsaved work in it.
+        let n = self.rope.len_chars();
+        let (a, b) = (a.min(b).min(n), a.max(b).min(n));
         if a == b && ins.is_empty() {
             return;
         }
@@ -972,7 +1055,9 @@ impl Doc {
             added,
         );
         self.shift_marks(line, col0, removed, added);
-        self.states.truncate(line + 1);
+        self.forget_states(line, removed, added);
+        // Expand and shrink selection remember ranges of the old text.
+        self.sel_stack.clear();
         self.rev += 1;
         self.open_ops.push(Op {
             at: a,
@@ -1049,7 +1134,7 @@ impl Doc {
         if !text.is_empty() {
             self.rope.insert(op_at, text);
         }
-        self.states.truncate(line + 1);
+        self.forget_states(line, removed, text.matches('\n').count());
         self.rev += 1;
     }
 
@@ -1290,7 +1375,7 @@ impl Doc {
     }
 
     fn goto_bracket(&mut self) {
-        let Some((a, b)) = self.matching_bracket() else {
+        let Some((a, b)) = self.matching_bracket(None) else {
             return;
         };
         let target = if self.cur == a || self.cur == a + 1 {
@@ -1502,8 +1587,10 @@ impl Doc {
         let delta = if up { -hop } else { hop };
         let (cur, anchor) = (self.cur, self.anchor);
         self.edit(start, end, &out.join("\n"));
-        self.cur = (cur as isize + delta) as usize;
-        self.anchor = (anchor as isize + delta) as usize;
+        // The end of a selection can sit at the start of the neighbour line; it may not move past the text.
+        let n = self.rope.len_chars() as isize;
+        self.cur = (cur as isize + delta).clamp(0, n) as usize;
+        self.anchor = (anchor as isize + delta).clamp(0, n) as usize;
     }
 
     fn join_lines(&mut self) {
@@ -1570,61 +1657,98 @@ impl Doc {
         self.cur = nb;
     }
 
-    fn matching_bracket(&mut self) -> Option<(usize, usize)> {
+    /// The bracket at the caret (or just before it) and its partner. Brackets in strings and
+    /// comments don't count, as in VS Code. With a `budget`, the search gives up after that long
+    /// (VS Code gives the highlight 20 ms); a jump asks without one.
+    fn matching_bracket(&mut self, budget: Option<std::time::Duration>) -> Option<(usize, usize)> {
         let key = (self.cur, self.rev);
         if let Some((k, v)) = self.pair_cache {
             if k == key {
                 return v;
             }
         }
-        const LIMIT: usize = 20_000;
+        let deadline = budget.map(|b| Instant::now() + b);
         let n = self.rope.len_chars();
-        let at = |i: usize| (i < n).then(|| self.rope.char(i));
         let opposite = |c: char| match c {
             ')' => Some('('),
             ']' => Some('['),
             '}' => Some('{'),
             _ => None,
         };
-        let mut found = None;
-        let candidates = [Some(self.cur), self.cur.checked_sub(1)];
-        for start in candidates.into_iter().flatten() {
-            let Some(c) = at(start) else { continue };
-            if let Some(close) = closer(c) {
-                let mut depth = 0;
-                for i in start + 1..n.min(start + LIMIT) {
-                    let d = self.rope.char(i);
-                    if d == c {
-                        depth += 1;
-                    } else if d == close {
-                        if depth == 0 {
-                            found = Some((start, i));
-                            break;
-                        }
-                        depth -= 1;
-                    }
-                }
-                break;
+        let mut found = Some(None);
+        for start in [Some(self.cur), self.cur.checked_sub(1)].into_iter().flatten().filter(|&i| i < n) {
+            let c = self.rope.char(start);
+            let (open, close, forward) = match (closer(c), opposite(c)) {
+                (Some(close), _) => (c, close, true),
+                (_, Some(open)) => (open, c, false),
+                _ => continue,
+            };
+            let line = self.rope.char_to_line(start);
+            if in_ranges(&self.quiet_ranges(line), start) {
+                continue;
             }
-            if let Some(open) = opposite(c) {
-                let mut depth = 0;
-                for i in (start.saturating_sub(LIMIT)..start).rev() {
-                    let d = self.rope.char(i);
-                    if d == c {
-                        depth += 1;
-                    } else if d == open {
-                        if depth == 0 {
-                            found = Some((i, start));
-                            break;
-                        }
-                        depth -= 1;
-                    }
-                }
-                break;
-            }
+            found = self.scan_bracket(start, open, close, forward, deadline).map(|m| m.map(|m| if forward { (start, m) } else { (m, start) }));
+            break;
         }
+        // Out of time: not remembered, so that a jump still looks for it in full.
+        let found = found?;
         self.pair_cache = Some((key, found));
         found
+    }
+
+    /// The partner of the bracket at `start`, at most `LIMIT` characters away. `None` when the
+    /// time ran out.
+    fn scan_bracket(&mut self, start: usize, open: char, close: char, forward: bool, deadline: Option<Instant>) -> Option<Option<usize>> {
+        const LIMIT: usize = 20_000;
+        let n = self.rope.len_chars();
+        let mut at: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new(start + 1..n.min(start + LIMIT))
+        } else {
+            Box::new((start.saturating_sub(LIMIT)..start).rev())
+        };
+        let (mut line, mut quiet) = (usize::MAX, vec![]);
+        let mut depth = 0;
+        at.find_map(|i| {
+            let d = self.rope.char(i);
+            if d != open && d != close {
+                return None;
+            }
+            let l = self.rope.char_to_line(i);
+            if l != line {
+                if deadline.is_some_and(|t| Instant::now() > t) {
+                    return Some(None);
+                }
+                line = l;
+                quiet = self.quiet_ranges(l);
+            }
+            if in_ranges(&quiet, i) {
+                return None;
+            }
+            if (d == close) == forward {
+                if depth == 0 {
+                    return Some(Some(i));
+                }
+                depth -= 1;
+            } else {
+                depth += 1;
+            }
+            None
+        })
+        .map_or(Some(None), |r| r.map(Some))
+    }
+
+    /// Where `line` has strings and comments, as character positions in the whole text.
+    fn quiet_ranges(&mut self, line: usize) -> Vec<(usize, usize)> {
+        self.ensure_states(line);
+        let text = self.line_text(line).into_owned();
+        let mut toks = vec![];
+        lexer::lex(&text, self.states[line], self.lang, &mut self.raws, &mut toks);
+        let slice = self.rope.line(line);
+        let base = self.rope.line_to_char(line);
+        toks.iter()
+            .filter(|t| matches!(t.tag, lexer::COMMENT | lexer::STRING | lexer::ESCAPE))
+            .map(|t| (base + slice.byte_to_char(t.start as usize), base + slice.byte_to_char((t.end as usize).min(text.len()))))
+            .collect()
     }
 
     pub fn selection_lines(&self) -> Option<(usize, usize)> {
@@ -1633,16 +1757,19 @@ impl Doc {
 
     pub fn apply_byte_replacements(&mut self, mut edits: Vec<(usize, usize, String)>) -> usize {
         edits.sort_by_key(|e| std::cmp::Reverse(e.0));
-        let total = self.rope.len_bytes();
         let count = edits.len();
         let mut cur = self.cur;
+        // Applied from the end, so each one must stop before the start of the one applied before it.
+        let mut limit = self.rope.len_bytes();
         self.begin();
         for (offset, length, text) in edits {
-            if offset + length > total {
+            if offset.saturating_add(length) > limit {
                 continue;
             }
             let a = self.rope.byte_to_char(offset);
             let b = self.rope.byte_to_char(offset + length);
+            // An offset inside a character starts at that character, so it reaches a little further.
+            limit = self.rope.char_to_byte(a);
             self.edit(a, b, &text);
             let inserted = text.chars().count();
             if cur >= b {
@@ -1718,7 +1845,8 @@ impl Doc {
         let (line, col) = self.pos(self.cur);
         let last = self.rope.len_lines() - 1;
         let vertical = matches!(to, Up | Down | PageUp | PageDown);
-        let want = self.want.unwrap_or_else(|| self.vcol(line, col));
+        // Only up and down need the column to aim for; on a very long line it costs a full walk.
+        let want = if vertical { self.want.unwrap_or_else(|| self.vcol(line, col)) } else { 0 };
         let target = match to {
             Left if self.has_sel() && !ext => self.sel_range().0,
             Right if self.has_sel() && !ext => self.sel_range().1,
@@ -1776,43 +1904,34 @@ impl Doc {
         self.cur = b;
     }
 
+    /// Where the query is in `text`, as byte offsets, without overlaps. Ignoring case is for
+    /// ASCII letters only; lowering them keeps every byte where it was.
     fn matches_in(&self, text: &str) -> Vec<usize> {
         let q = &self.query;
         if q.is_empty() || q.len() > text.len() {
             return vec![];
         }
-        let (hay, needle) = (text.as_bytes(), q.as_bytes());
-        let eq = |a: u8, b: u8| {
-            if self.case {
-                a == b
-            } else {
-                a.eq_ignore_ascii_case(&b)
-            }
-        };
-        let mut out = vec![];
-        let mut i = 0;
-        while i + needle.len() <= hay.len() {
-            if hay[i..i + needle.len()]
-                .iter()
-                .zip(needle)
-                .all(|(a, b)| eq(*a, *b))
-                && text.is_char_boundary(i)
-            {
-                out.push(i);
-                i += needle.len();
-            } else {
-                i += 1;
-            }
+        if self.case {
+            return text.match_indices(q.as_str()).map(|(i, _)| i).collect();
         }
-        out
+        let hay = text.to_ascii_lowercase();
+        hay.match_indices(q.to_ascii_lowercase().as_str()).map(|(i, _)| i).collect()
     }
 
     pub fn set_search(&mut self, q: &str, case: bool) -> usize {
         self.query = q.lines().next().unwrap_or("").to_string();
         self.case = case;
-        (0..self.rope.len_lines())
-            .map(|l| self.matches_in(&self.line_text(l)).len())
-            .sum()
+        if self.query.is_empty() {
+            return 0;
+        }
+        // The query has no line break, so no match crosses one: counting over the whole text
+        // gives the same number as line by line, at a fraction of the cost.
+        let mut text = self.rope.to_string();
+        if case {
+            return text.matches(self.query.as_str()).count();
+        }
+        text.make_ascii_lowercase();
+        text.matches(self.query.to_ascii_lowercase().as_str()).count()
     }
 
     fn select_match(&mut self, line: usize, byte: usize, text: &str) {
@@ -2003,10 +2122,12 @@ impl Doc {
                 }
             }
             Complete { s } => {
+                // The typed prefix ends at the caret, which may be either end of a selection.
                 let n = self.prefix().chars().count();
                 let (a, b) = self.sel_range();
-                self.edit(a - n, b, &s);
-                self.set(a - n + s.chars().count());
+                let start = (self.cur - n).min(a);
+                self.edit(start, b.max(self.cur), &s);
+                self.set(start + s.chars().count());
             }
             Goto { line, col } => {
                 let c = self.col_from_utf16(line, col);
@@ -2060,11 +2181,15 @@ impl Doc {
 
     fn ensure_states(&mut self, upto: usize) {
         let mut scratch = Vec::new();
-        while self.states.len() <= upto {
-            let i = self.states.len() - 1;
-            let st = self.states[i];
+        while self.valid <= upto {
+            let k = self.valid;
+            if k < self.states.len() && !self.check[k] {
+                self.valid += 1;
+                continue;
+            }
+            let st = self.states[k - 1];
             scratch.clear();
-            let text: Cow<str> = self.rope.line(i).into();
+            let text: Cow<str> = self.rope.line(k - 1).into();
             let next = lexer::lex(
                 text.trim_end_matches('\n'),
                 st,
@@ -2072,8 +2197,69 @@ impl Doc {
                 &mut self.raws,
                 &mut scratch,
             );
-            self.states.push(next);
+            #[cfg(test)]
+            {
+                self.worked += 1;
+            }
+            self.settle(k, next);
         }
+    }
+
+    fn reset_states(&mut self) {
+        self.states.truncate(1);
+        self.check.truncate(1);
+        self.valid = 1;
+    }
+
+    /// Lines `line..=line + removed` became `line..=line + added`. The states of the new lines
+    /// are not known, and the one after them must be checked: the line before it changed.
+    fn forget_states(&mut self, line: usize, removed: usize, added: usize) {
+        self.valid = self.valid.min(line + 1);
+        let len = self.states.len();
+        let from = (line + 1).min(len);
+        let to = (line + removed + 1).min(len);
+        let new = if to < len || from < len { added } else { 0 };
+        self.states.splice(from..to, std::iter::repeat_n(u32::MAX, new));
+        self.check.splice(from..to, std::iter::repeat_n(true, new));
+        if let Some(c) = self.check.get_mut(from + new) {
+            *c = true;
+        }
+    }
+
+    /// Line `k` starts in `next`: worked out from the line before, which is sure. When that
+    /// differs from what was kept, the line after it must be checked too.
+    fn settle(&mut self, k: usize, next: u32) {
+        debug_assert_eq!(k, self.valid);
+        if k < self.states.len() {
+            if self.states[k] != next {
+                self.states[k] = next;
+                if let Some(c) = self.check.get_mut(k + 1) {
+                    *c = true;
+                }
+            }
+            self.check[k] = false;
+        } else {
+            self.states.push(next);
+            self.check.push(false);
+        }
+        self.valid = k + 1;
+    }
+
+    /// The states worked out again from the first line, to compare with the kept ones.
+    #[cfg(test)]
+    pub fn states_from_scratch(&mut self) -> Result<(), String> {
+        let total = self.rope.len_lines();
+        self.ensure_states(total);
+        let (mut st, mut scratch, mut raws) = (0, vec![], self.raws.clone());
+        for i in 0..total.min(self.valid) {
+            if self.states[i] != st {
+                return Err(format!("line {i} starts in state {} but should be {st}", self.states[i]));
+            }
+            scratch.clear();
+            let text: Cow<str> = self.rope.line(i).into();
+            st = lexer::lex(text.trim_end_matches('\n'), st, self.lang, &mut raws, &mut scratch);
+        }
+        Ok(())
     }
 
     fn emit(
@@ -2188,8 +2374,8 @@ impl Doc {
         let text = self.line_text(i).into_owned();
         let st = self.states[i];
         let next = lexer::lex(&text, st, self.lang, &mut self.raws, toks);
-        if self.states.len() == i + 1 {
-            self.states.push(next);
+        if self.valid == i + 1 {
+            self.settle(i + 1, next);
         }
         self.overlay_semantic(i, &text, toks);
         let code_lang = matches!(self.lang, Lang::C | Lang::Cpp | Lang::CMake);
@@ -2224,19 +2410,33 @@ impl Doc {
         self.emit(&text[pos..], None, &mut vcol, &mut out, &mut budget);
         self.maxw = self.maxw.max(vcol);
 
-        let last_code = text.bytes().enumerate().rev().find(|(i, b)| {
-            !b.is_ascii_whitespace()
-                && !toks.iter().any(|t| {
-                    (t.start as usize..t.end as usize).contains(i) && t.tag == lexer::COMMENT
-                })
-        });
+        // The tokens are in order, so the one holding a byte is found by halving, not by trying
+        // them all for every byte (that was quadratic on a long line ending in a comment).
+        let in_comment = |i: usize| {
+            let k = toks.partition_point(|t| t.start as usize <= i);
+            k > 0 && {
+                let t = &toks[k - 1];
+                (t.start as usize..t.end as usize).contains(&i) && t.tag == lexer::COMMENT
+            }
+        };
+        let last_code = text.bytes().enumerate().rev().find(|&(i, b)| !b.is_ascii_whitespace() && !in_comment(i));
         let foldable = code_lang
             && (last_code.is_some_and(|(_, b)| b == b'{') || (st == 0 && next == lexer::BLOCK));
         (out, foldable)
     }
 
-    fn vcol_of_byte(&self, text: &str, byte: usize) -> usize {
-        text[..byte].chars().fold(0, |v, c| self.step(v, c))
+    /// The visual columns of several byte offsets of `text`, sorted, in a single walk: one walk
+    /// per offset was quadratic on a long line with many matches.
+    fn vcols_of_bytes(&self, text: &str, bytes: &[usize]) -> Vec<usize> {
+        let (mut v, mut at) = (0, 0);
+        bytes
+            .iter()
+            .map(|&b| {
+                v = text[at..b].chars().fold(v, |v, c| self.step(v, c));
+                at = b;
+                v
+            })
+            .collect()
     }
 
     pub fn view(&mut self, top: usize, rows: usize, reveal: bool) -> View {
@@ -2301,9 +2501,9 @@ impl Doc {
         if !self.query.is_empty() {
             let qw = self.query.chars().count();
             for (i, &l) in nums.iter().enumerate() {
-                let text = self.line_text(l).into_owned();
-                for m in self.matches_in(&text) {
-                    let v = self.vcol_of_byte(&text, m);
+                let full = self.line_text(l);
+                let text = drawn(&full);
+                for v in self.vcols_of_bytes(text, &self.matches_in(text)) {
                     marks.push([first + i, v, v + qw]);
                 }
             }
@@ -2315,21 +2515,22 @@ impl Doc {
                 let word: String = self.rope.slice(a..b).into();
                 let chars = word.chars().count();
                 for (i, &l) in nums.iter().enumerate() {
-                    let text = self.line_text(l).into_owned();
-                    for (m, _) in text.match_indices(&word) {
-                        let before = text[..m].chars().next_back().is_some_and(is_word);
-                        let after = text[m + word.len()..].chars().next().is_some_and(is_word);
-                        if !before && !after {
-                            let v = self.vcol_of_byte(&text, m);
-                            occ.push([first + i, v, v + chars]);
-                        }
+                    let full = self.line_text(l);
+                    let text = drawn(&full);
+                    let whole: Vec<usize> = text
+                        .match_indices(&word)
+                        .map(|(m, _)| m)
+                        .filter(|&m| !text[..m].chars().next_back().is_some_and(is_word) && !text[m + word.len()..].chars().next().is_some_and(is_word))
+                        .collect();
+                    for v in self.vcols_of_bytes(text, &whole) {
+                        occ.push([first + i, v, v + chars]);
                     }
                 }
             }
         }
 
         let mut pair = vec![];
-        if let Some((a, b)) = self.matching_bracket() {
+        if let Some((a, b)) = self.matching_bracket(Some(std::time::Duration::from_millis(20))) {
             for p in [a, b] {
                 let (l, c) = self.pos(p);
                 if let Some(r) = in_view(&nums, l) {
@@ -2395,11 +2596,9 @@ impl Doc {
         let key = (self.cur, self.anchor, self.rev);
         let clip = if self.sent_clip != Some(key) {
             self.sent_clip = Some(key);
-            Some(if sa != sb {
-                self.rope.slice(sa..sb).to_string()
-            } else {
-                format!("{}\n", self.line_text(cl))
-            })
+            // Sent with every move, so the copy event can fill the clipboard at once. A huge one
+            // is left out (empty means "ask for it"): copying it is rare, moving is not.
+            Some(if self.clip_len() > CLIP_MAX { String::new() } else { self.clip_text() })
         } else {
             None
         };
@@ -2720,6 +2919,113 @@ mod tests {
     }
 
     #[test]
+    fn shrink_selection_after_the_file_changed_on_disk() {
+        let mut d = cpp("int main() { return value; }\n");
+        d.run(Cmd::Goto { line: 0, col: 20 }).unwrap();
+        d.run(Cmd::ExpandSelection).unwrap();
+        d.run(Cmd::ExpandSelection).unwrap();
+        d.reload("x", None);
+        d.run(Cmd::ShrinkSelection).unwrap();
+        d.check().unwrap();
+        d.view(0, 10, true);
+    }
+
+    #[test]
+    fn completion_with_a_selection_before_the_caret() {
+        let mut d = cpp("ab foo");
+        d.run(Cmd::Goto { line: 0, col: 6 }).unwrap();
+        d.run(Cmd::Move { to: Motion::Home, ext: true, rows: None }).unwrap();
+        d.run(Cmd::Move { to: Motion::End, ext: true, rows: None }).unwrap();
+        d.run(Cmd::Complete { s: "foobar".into() }).unwrap();
+        d.check().unwrap();
+        assert_eq!(txt(&d), "ab foobar");
+    }
+
+    #[test]
+    fn replacements_that_start_inside_a_character() {
+        let mut d = cpp("a😀b");
+        d.apply_byte_replacements(vec![(3, 1, "x".into()), (2, 0, "y".into())]);
+        d.check().unwrap();
+    }
+
+    #[test]
+    fn moving_lines_down_with_the_selection_ending_on_the_last_line() {
+        let mut d = cpp("a\nb");
+        d.run(Cmd::SelectAll).unwrap();
+        d.run(Cmd::MoveLines { up: false }).unwrap();
+        d.check().unwrap();
+    }
+
+    #[test]
+    fn counting_matches_agrees_with_the_matches_on_each_line() {
+        let texts = ["Return x;\nreturn RETURN\nreturnreturn\n", "ÉÉé éÉ\nAaAa aa\n", "😀a😀A\n\n😀", "aaaa\naaa\n"];
+        for text in texts {
+            let mut d = cpp(text);
+            for q in ["return", "a", "aa", "é", "😀a", "Éé", "\n"] {
+                for case in [false, true] {
+                    let n = d.set_search(q, case);
+                    let by_line: usize = (0..d.rope.len_lines()).map(|l| d.matches_in(&d.line_text(l)).len()).sum();
+                    assert_eq!(n, by_line, "{text:?} {q:?} {case}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn visual_column_with_and_without_tabs() {
+        let d = cpp("\tab\n  c");
+        assert_eq!(d.vcol(0, 1), 4);
+        assert_eq!(d.vcol(0, 3), 6);
+        assert_eq!(d.vcol(1, 3), 3);
+        assert_eq!(d.vcol(0, 99), 7);
+    }
+
+    #[test]
+    fn a_huge_line_is_not_sent_ahead_for_copying() {
+        let mut d = cpp(&"x".repeat(CLIP_MAX + 10));
+        assert_eq!(d.view(0, 10, true).clip.as_deref(), Some(""));
+        assert_eq!(d.clip_text().len(), CLIP_MAX + 11);
+        let mut d = cpp("short");
+        assert_eq!(d.view(0, 10, true).clip.as_deref(), Some("short\n"));
+    }
+
+    #[test]
+    fn a_change_at_the_top_keeps_the_colors_further_down() {
+        let text: String = (0..3000).map(|i| format!("int f{i}() {{ return {i}; }} /* c */\n")).collect();
+        let mut d = cpp(&text);
+        d.states_from_scratch().unwrap();
+        d.run(Cmd::Goto { line: 0, col: 0 }).unwrap();
+        d.run(Cmd::Type { s: "x".into() }).unwrap();
+        // Drawing the end needs the states down there: the first line shows they did not change,
+        // so nothing past it is left to check, and the lines in between are not worked out again.
+        assert_eq!(d.check.iter().filter(|c| **c).count(), 1);
+        let v = d.view(2950, 40, false);
+        assert!(d.check.iter().all(|c| !c), "taken back, not worked out again");
+        assert!(plain_text(&v).iter().any(|l| l.contains("f2960")));
+        // A change that does reach every line below is still followed.
+        d.run(Cmd::Type { s: "/*".into() }).unwrap();
+        d.states_from_scratch().unwrap();
+    }
+
+    /// Replace All changes lines all over the file at once: only those are worked out again.
+    #[test]
+    fn changes_all_over_the_file_work_out_only_the_lines_they_touch() {
+        let text: String = (0..3000).map(|i| if i % 1000 == 10 { "int MARK = 1;\n".to_string() } else { format!("int f{i}() {{ return {i}; }}\n") }).collect();
+        let mut d = cpp(&text);
+        d.states_from_scratch().unwrap();
+        d.set_search("MARK", true);
+        d.run(Cmd::ReplaceAll { s: "OTHER".into() }).unwrap();
+        d.worked = 0;
+        d.view(2950, 40, false);
+        assert!(d.worked <= 6, "{} lines worked out again", d.worked);
+        d.states_from_scratch().unwrap();
+    }
+
+    fn plain_text(v: &View) -> Vec<String> {
+        v.lines.iter().map(|l| l.replace("&amp;", "&").split('<').map(|p| p.split_once('>').map_or(p, |x| x.1)).collect::<String>()).collect()
+    }
+
+    #[test]
     fn utf16_columns_handle_astral_characters() {
         let d = cpp("😀x");
         assert_eq!(d.col_from_utf16(0, 2), 1);
@@ -2755,7 +3061,7 @@ mod tests {
         let mut d = cpp(&text);
         let v = d.view(0, 40, false);
         assert_eq!(v.lines.len(), 40 + OVERSCAN);
-        assert!(d.states.len() < 40 + 2 * OVERSCAN + 40);
+        assert!(d.valid < 40 + 2 * OVERSCAN + 40);
     }
 
     #[test]
@@ -2879,6 +3185,18 @@ mod tests {
         })
         .unwrap();
         assert_eq!(d.cursor_pos(), (0, 3));
+    }
+
+    #[test]
+    fn brackets_in_strings_and_comments_do_not_count() {
+        let mut d = cpp("if (c == ')') { f(\"(\"); } // )\nx");
+        d.run(Cmd::Goto { line: 0, col: 3 }).unwrap();
+        assert_eq!(d.matching_bracket(None), Some((3, 12)), "not the one in ')'");
+        d.run(Cmd::Goto { line: 0, col: 14 }).unwrap();
+        assert_eq!(d.matching_bracket(None), Some((14, 24)), "past the \"(\"");
+        // A bracket that is itself in a string has no partner.
+        d.run(Cmd::Goto { line: 0, col: 19 }).unwrap();
+        assert_eq!(d.matching_bracket(None), None);
     }
 
     #[test]

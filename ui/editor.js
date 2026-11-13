@@ -1,760 +1,913 @@
 import { invoke, $, keyName, root } from './core.js'
 import * as theme from './theme.js'
 
-const scroll = $('scroll'), sizer = $('sizer'), gutter = $('gutter'), linesEl = $('lines'), gmarks = $('gmarks')
-const dropCaret = $('drop-caret')
-const caret = $('caret'), curline = $('curline'), execline = $('execline'), selEl = $('sel'), marksEl = $('marks')
-const diagsEl = $('diags'), occEl = $('occ'), pairEl = $('pair'), ime = $('ime')
+// What Ctrl+C copies, by document: two editor groups can show the same one.
+const clips = new Map()
+const clipOf = (id) => clips.get(id) ?? ''
 
-let LH = 20, CH = 8, GW = 56
-const PAD = 8
-const FOLD_W = 16
+/** One editor, drawn in `pane` (a copy of the editor's elements, found by their classes). */
+function createEditor(pane) {
+  const q = (n) => pane.querySelector('.e-' + n)
+  const scroll = q('scroll'), sizer = q('sizer'), gutter = q('gutter'), linesEl = q('lines'), gmarks = q('gmarks')
+  const dropCaret = q('drop-caret')
+  const caret = q('caret'), curline = q('curline'), execline = q('execline'), selEl = q('sel'), marksEl = q('marks')
+  const diagsEl = q('diags'), occEl = q('occ'), pairEl = q('pair'), ime = q('ime')
 
-let docId = null
-let queue = []
-let busy = false
-let wantPaint = false
-let reveal = false
-let clip = ''
-let lastTop = -1
-let onView = () => {}
-let idleWaiters = []
-let view = null
-let sizerH = ''
-let sizerW = ''
-let lastCaret = null
-const trail = $('caret-trail')
-const caretGlow = $('caret-glow')
-const ghostEl = $('ghost')
-let ghostText = ''
-let seenRev = -1, seenTotal = -1, seenDoc = null, seenRow = -1, seenCol = 0, seenText = ''
-let typedMarks = []
-const TYPED_MS = 260
+  let LH = 20, CH = 8, GW = 56
+  const PAD = 8
+  const FOLD_W = 16
 
-const live = new Map()
-const spare = []
-// Rows that were drawn before, kept so that scrolling back, or on into rows that arrived with the
-// last view, shows text at once while the next view is on its way.
-const rowCache = new Map()
-let cacheKey = ''
-const CACHE_ROWS = 3000
+  let docId = null
+  let queue = []
+  let busy = false
+  let wantPaint = false
+  let reveal = false
+  let lastTop = -1
+  let onView = () => {}
+  let idleWaiters = []
+  let view = null
+  let sizerH = ''
+  let sizerW = ''
+  let lastCaret = null
+  const trail = q('caret-trail')
+  const caretGlow = q('caret-glow')
+  const ghostEl = q('ghost')
+  let ghostText = ''
+  let seenRev = -1, seenTotal = -1, seenDoc = null, seenRow = -1, seenCol = 0, seenText = ''
+  let typedMarks = []
+  const TYPED_MS = 200
+  let lastEditAt = 0
 
-const rows = () => Math.max(1, Math.floor(scroll.clientHeight / LH))
+  const live = new Map()
+  const spare = []
+  // Rows that were drawn before, kept so that scrolling back, or on into rows that arrived with the
+  // last view, shows text at once while the next view is on its way.
+  const rowCache = new Map()
+  let cacheKey = ''
+  const CACHE_ROWS = 3000
+  // What each document that was shown last drew, so that coming back to it shows text at once.
+  const docCaches = new Map()
 
-export const metrics = () => ({ LH, CH })
+  const rows = () => Math.max(1, Math.floor(scroll.clientHeight / LH))
 
-export function configure({ onChange }) {
-  onView = onChange
-}
+  const metrics = () => ({ LH, CH })
 
-export function measure() {
-  const m = $('measure')
-  m.textContent = 'x'.repeat(100)
-  CH = m.getBoundingClientRect().width / 100
-  root.style.setProperty('--ch', CH + 'px')
-  LH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lh'), 10) || 20
-  for (const r of live.values()) recycle(r)
-  live.clear()
-  repaint()
-}
-
-async function pump() {
-  if (busy || docId === null) return
-  busy = true
-  try {
-    while ((queue.length || wantPaint) && docId !== null) {
-      const cmds = queue
-      const id = docId
-      const rev = reveal
-      queue = []
-      wantPaint = false
-      reveal = false
-      const top = Math.floor(scroll.scrollTop / LH)
-      lastTop = top
-      const v = await invoke('doc_apply', { id, cmds, top, rows: rows(), reveal: rev })
-      if (id === docId) paint(v, rev)
-    }
-  } catch (e) {
-    console.error(e)
-  } finally {
-    busy = false
-    for (const w of idleWaiters.splice(0)) w()
-  }
-}
-
-export function send(...cmds) {
-  queue.push(...cmds)
-  reveal = true
-  pump()
-}
-
-export function quiet(...cmds) {
-  queue.push(...cmds)
-  pump()
-}
-
-export function repaint() {
-  wantPaint = true
-  pump()
-}
-
-export function idle() {
-  return !busy && !queue.length ? Promise.resolve() : new Promise((r) => idleWaiters.push(r))
-}
-
-export function current() {
-  return docId
-}
-
-export const lastView = () => view
-
-const scrollMemo = new Map()
-
-export function show(id) {
-  if (docId !== null) scrollMemo.set(docId, [scroll.scrollTop, scroll.scrollLeft])
-  docId = id
-  queue = []
-  scroll.hidden = id === null
-  $('empty').hidden = id !== null
-  if (id === null) return
-  const [t, l] = scrollMemo.get(id) ?? [0, 0]
-  for (const r of live.values()) recycle(r)
-  live.clear()
-  sizer.style.height = sizerH = '0'
-  view = null
-  lastCaret = null
-  if (root.dataset.fxUi === 'on') linesEl.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' })
-  queue.push({ t: 'fresh' })
-  wantPaint = true
-  pump().then(() => {
-    scroll.scrollTop = t
-    scroll.scrollLeft = l
-  })
-  focus()
-}
-
-export function forget(id) {
-  scrollMemo.delete(id)
-}
-
-export function focus() {
-  ime.focus({ preventScroll: true })
-}
-
-export const hasFocus = () => document.activeElement === ime
-
-function recycle(r) {
-  r.l.hidden = true
-  r.g.hidden = true
-  spare.push(r)
-}
-
-function setHtml(el, key, html) {
-  if (el[key] !== html) {
-    el[key] = html
-    el.innerHTML = html
-  }
-}
-
-function viewKey(v) {
-  return `${docId}|${v.rev}|${v.n}|${v.total}|0`
-}
-
-function makeRow(n) {
-  let r = spare.pop()
-  if (!r) {
-    r = { l: document.createElement('div'), g: document.createElement('div') }
-    r.l.className = 'l'
-    r.g.className = 'gl'
-    linesEl.appendChild(r.l)
-    gutter.appendChild(r.g)
-  }
-  const y = n * LH + 'px'
-  r.l.style.top = y
-  r.g.style.top = y
-  r.l.style.left = PAD + 'px'
-  r.l.hidden = false
-  r.g.hidden = false
-  live.set(n, r)
-  return r
-}
-
-/** Draws, from what was drawn before, the rows in sight that the last view did not have. */
-function paintCached() {
-  if (!view || docId === null || cacheKey !== viewKey(view)) return
-  const first = Math.max(0, Math.floor(scroll.scrollTop / LH) - 2)
-  const last = Math.min(view.n, Math.ceil((scroll.scrollTop + scroll.clientHeight) / LH) + 2)
-  for (let n = first; n < last; n++) {
-    if (live.has(n)) continue
-    const c = rowCache.get(n)
-    if (!c) continue
-    const r = makeRow(n)
-    r.num = c.num
-    r.g.textContent = c.num
-    r.on = false
-    r.g.classList.remove('cur')
-    setHtml(r.l, '_h', c.html)
-  }
-}
-
-function paint(v, revealed) {
-  view = v
-  const digits = String(v.total).length
-  const gw = Math.ceil(Math.max(digits, 3) * CH) + 22 + FOLD_W
-  if (gw !== GW) {
-    GW = gw
-    document.documentElement.style.setProperty('--gw', gw + 'px')
-  }
-  const height = v.n * LH + 'px'
-  if (height !== sizerH) sizer.style.height = sizerH = height
-  const width = GW + PAD + (v.maxw + 4) * CH + 'px'
-  if (width !== sizerW) sizer.style.width = sizerW = width
-
-  if (revealed && v.top !== Math.floor(scroll.scrollTop / LH)) {
-    scroll.scrollTop = v.top * LH
-    lastTop = v.top
+  function configure({ onChange }) {
+    onView = onChange
   }
 
-  const end = v.first + v.lines.length
-  for (const [n, r] of live) {
-    if (n < v.first || n >= end) {
-      recycle(r)
-      live.delete(n)
-    }
-  }
-  const [curR, curV] = v.cur
-  for (let i = 0; i < v.lines.length; i++) {
-    const n = v.first + i
-    const r = live.get(n) ?? makeRow(n)
-    const num = v.nums[i] + 1
-    if (r.num !== num) {
-      r.num = num
-      r.g.textContent = num
-    }
-    setHtml(r.l, '_h', v.lines[i])
-    const on = n === curR
-    if (r.on !== on) {
-      r.on = on
-      r.g.classList.toggle('cur', on)
-    }
+  function measure() {
+    const m = $('measure')
+    m.textContent = 'x'.repeat(100)
+    CH = m.getBoundingClientRect().width / 100
+    root.style.setProperty('--ch', CH + 'px')
+    LH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--lh'), 10) || 20
+    for (const r of live.values()) recycle(r)
+    live.clear()
+    repaint()
   }
 
-  if (!v.pending) {
-    const key = viewKey(v)
-    if (key !== cacheKey) {
-      rowCache.clear()
-      cacheKey = key
-    }
-    for (let i = 0; i < v.lines.length; i++) rowCache.set(v.first + i, { html: v.lines[i], num: v.cont[i] ? '' : v.nums[i] + 1 })
-    if (rowCache.size > CACHE_ROWS) {
-      for (const n of [...rowCache.keys()].sort((a, b) => Math.abs(b - v.top) - Math.abs(a - v.top)).slice(0, rowCache.size - CACHE_ROWS)) rowCache.delete(n)
-    }
-  }
-
-  const x = PAD + curV * CH
-  const y = curR * LH
-  const tr = `translate(${x}px,${y}px)`
-  smear(x, y)
-  typingEffects(v, x, y, curR)
-  if (ghostText) ghostEl.style.transform = tr
-  caret.style.transform = tr
-  ime.style.transform = tr
-  curline.style.transform = `translateY(${y}px)`
-  execline.hidden = v.exec === null
-  if (v.exec !== null) execline.style.transform = `translateY(${v.exec * LH}px)`
-
-  const rect = (list) => list.map(([l, a, b]) => `<div style="top:${l * LH}px;left:${PAD + a * CH}px;width:${(b - a) * CH}px"></div>`).join('')
-  setHtml(selEl, '_h', rect(v.sel))
-  setHtml(marksEl, '_h', rect(v.marks))
-  setHtml(occEl, '_h', rect(v.occ))
-  setHtml(pairEl, '_h', v.pair.map(([l, a]) => `<div style="top:${l * LH}px;left:${PAD + a * CH}px;width:${CH}px"></div>`).join(''))
-  setHtml(diagsEl, '_h', v.diags.map(([l, a, b, s]) => `<div class="${s === 1 ? 'e' : 'w'}" style="top:${(l + 1) * LH - 2}px;left:${PAD + a * CH}px;width:${(b - a) * CH}px"></div>`).join(''))
-
-  const stripeMax = Math.max(v.n, 1)
-  setHtml($('stripes'), '_h', v.stripes.map(([r, s]) => `<i class="${s === 1 ? 'e' : 'w'}" style="top:${(r / stripeMax) * 100}%"></i>`).join(''))
-
-  let g = ''
-  for (const [row, kind] of v.git) g += `<i class="g${kind}" style="top:${row * LH}px"></i>`
-  for (const row of v.bps) g += `<i class="bp" style="top:${row * LH}px"></i>`
-  if (v.exec !== null) g += `<i class="ex" style="top:${v.exec * LH}px"></i>`
-  for (const [row, s] of v.folds) g += `<i class="fd${s === 2 ? ' closed' : ''}" data-row="${row}" style="top:${row * LH}px">${s === 2 ? '›' : '⌄'}</i>`
-  setHtml(gmarks, '_h', g)
-
-  if (revealed) {
-    const margin = CH * 3
-    const left = scroll.scrollLeft
-    const width = scroll.clientWidth - GW
-    if (x - margin < left) scroll.scrollLeft = Math.max(0, x - margin)
-    else if (x + margin > left + width) scroll.scrollLeft = x + margin - width
-  }
-
-  if (v.clip !== null && v.clip !== undefined) clip = v.clip
-  onView(docId, v)
-}
-
-function typingEffects(v, x, y, row) {
-  const same = seenDoc === docId
-  const edited = same && v.rev !== seenRev
-  const grew = same && v.total === seenTotal + 1
-  const prevRow = seenRow, prevCol = seenCol, prevTotal = seenTotal, prevText = seenText
-  seenDoc = docId
-  seenRev = v.rev
-  seenTotal = v.total
-  seenRow = row
-  seenCol = v.cur[1]
-  seenText = live.get(row)?.l.textContent ?? ''
-  if (root.dataset.fxType !== 'on') return
-  const size = LH * 7
-  caretGlow.style.width = caretGlow.style.height = size + 'px'
-  caretGlow.style.transform = `translate(${x - size / 2 + 1}px,${y + LH / 2 - size / 2}px)`
-  if (!edited) return
-  caretGlow.getAnimations().forEach((a) => a.cancel())
-  caretGlow.animate([{ opacity: 1 }, { opacity: 0.5 }], { duration: 420, easing: 'ease-out' })
-  const typed = v.cur[1] - prevCol
-  if (!grew && prevRow === row && typed > 0 && typed <= 80) typedMarks.push({ row, from: prevCol, to: v.cur[1], t: performance.now() })
-  fadeTyped(row)
-  if (!grew && prevRow === row && v.total === prevTotal) eraseText(prevText, seenText, row)
-  const lost = prevTotal - v.total
-  if (same && lost > 0 && lost <= 5) {
-    if (lost === 1 && prevRow === row && prevText.trim() && prevText !== seenText) eraseLine(prevText, row)
-    glideRows(row, lost * LH)
-  }
-  if (grew) glideRows(row, -LH)
-  if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
-}
-
-function wrapRange(el, from, to, className) {
-  const pieces = []
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-  let offset = 0
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const a = Math.max(from, offset) - offset
-    const b = Math.min(to, offset + n.data.length) - offset
-    if (b > a) pieces.push([n, a, b])
-    offset += n.data.length
-  }
-  return pieces.reverse().map(([node, a, b]) => {
-    const span = document.createElement('span')
-    span.className = className
-    const range = document.createRange()
-    range.setStart(node, a)
-    range.setEnd(node, b)
-    range.surroundContents(span)
-    return span
-  })
-}
-
-/** Rows below a change move into place instead of jumping. */
-function glideRows(from, dy) {
-  for (const [n, r] of live) {
-    if (n <= from) continue
-    for (const el of [r.l, r.g]) el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 150, easing: 'ease-out' })
-  }
-}
-
-/** A deleted line slides out to the left as it fades. */
-function eraseLine(text, row) {
-  const ghost = document.createElement('div')
-  ghost.className = 'erased'
-  ghost.textContent = text
-  ghost.style.left = PAD + 'px'
-  ghost.style.top = row * LH + 'px'
-  linesEl.parentElement.append(ghost)
-  ghost.animate([{ opacity: 0.8, filter: 'blur(0px)', transform: 'none' }, { opacity: 0, filter: 'blur(3px)', transform: 'translateX(-14px)' }], { duration: 220, easing: 'ease-out' }).onfinish = () => ghost.remove()
-}
-
-/** Deleted text fades out where it was, and what follows it glides into the gap. */
-function eraseText(prev, next, row) {
-  if (next.length >= prev.length) return
-  let p = 0
-  while (p < next.length && prev[p] === next[p]) p++
-  let s = 0
-  while (s < next.length - p && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++
-  const gone = prev.slice(p, prev.length - s)
-  if (next.length !== p + s || !gone.trim() || gone.length > 80) return
-  const ghost = document.createElement('div')
-  ghost.className = 'erased'
-  ghost.textContent = gone
-  ghost.style.left = PAD + p * CH + 'px'
-  ghost.style.top = row * LH + 'px'
-  linesEl.parentElement.append(ghost)
-  ghost.animate([{ opacity: 0.8, filter: 'blur(0px)', transform: 'none' }, { opacity: 0, filter: 'blur(3px)', transform: 'translateY(-3px)' }], { duration: 240, easing: 'ease-out' }).onfinish = () => ghost.remove()
-  const el = live.get(row)?.l
-  if (!el || s === 0) return
-  for (const span of wrapRange(el, p, next.length, 'slide')) span.animate([{ transform: `translateX(${gone.length * CH}px)` }, { transform: 'none' }], { duration: 140, easing: 'ease-out' })
-}
-
-/** Text you just wrote fades in with the same soft blur as the text the AI writes. */
-function fadeTyped(row) {
-  const now = performance.now()
-  typedMarks = typedMarks.filter((m) => m.row === row && now - m.t < TYPED_MS)
-  const el = live.get(row)?.l
-  if (!el || !typedMarks.length) return
-  const nodes = []
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-  let offset = 0
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    nodes.push([n, offset])
-    offset += n.data.length
-  }
-  const jobs = []
-  for (const m of typedMarks) {
-    nodes.forEach(([node, start], i) => {
-      const a = Math.max(m.from, start) - start
-      const b = Math.min(m.to, start + node.data.length) - start
-      if (b > a) jobs.push({ i, node, a, b, age: now - m.t })
-    })
-  }
-  jobs.sort((p, q) => q.i - p.i || q.a - p.a)
-  for (const j of jobs) {
-    const span = document.createElement('span')
-    span.className = 'typed'
-    span.style.animationDelay = `-${Math.round(j.age)}ms`
-    const range = document.createRange()
-    range.setStart(j.node, j.a)
-    range.setEnd(j.node, j.b)
-    range.surroundContents(span)
-  }
-}
-
-/** `ahead` is how many characters the caret is about to move, until the next repaint catches up. */
-export function setGhost(text, ahead = 0) {
-  ghostText = text
-  ghostEl.textContent = text
-  ghostEl.hidden = !text
-  if (text && lastCaret) ghostEl.style.transform = `translate(${lastCaret.x + ahead * CH}px,${lastCaret.y}px)`
-}
-
-export function flashSaved() {
-  if (root.dataset.fxType !== 'on') return
-  scroll.animate(
-    [{ boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent)' }, { boxShadow: 'inset 0 0 0 1px transparent' }],
-    { duration: 520, easing: 'ease-out' },
-  )
-}
-
-function smear(x, y) {
-  const from = lastCaret
-  lastCaret = { x, y }
-  if (!from || root.dataset.fxTrail !== 'on') return
-  const dx = from.x - x
-  const dy = from.y - y
-  const length = Math.hypot(dx, dy)
-  if (!length || length > 700) return
-  const angle = Math.atan2(dy, dx)
-  const height = Math.abs(Math.cos(angle)) * LH + Math.abs(Math.sin(angle)) * 3
-  trail.style.width = length + 'px'
-  trail.style.height = height + 'px'
-  trail.style.transform = `translate(${x}px,${y + (LH - height) / 2}px) rotate(${angle}rad)`
-  trail.style.transformOrigin = `0 ${height / 2}px`
-  trail.getAnimations().forEach((a) => a.cancel())
-  trail.animate([{ opacity: 0.32 }, { opacity: 0 }], { duration: 130, easing: 'ease-out' })
-}
-
-let scrollQueued = false
-scroll.addEventListener(
-  'scroll',
-  () => {
-    hook.scrolled()
-    if (scrollQueued) return
-    scrollQueued = true
-    requestAnimationFrame(() => {
-      scrollQueued = false
-      if (Math.floor(scroll.scrollTop / LH) !== lastTop) {
-        paintCached()
-        repaint()
+  async function pump() {
+    if (busy || docId === null) return
+    busy = true
+    try {
+      while ((queue.length || wantPaint) && docId !== null) {
+        const cmds = queue
+        const id = docId
+        const rev = reveal
+        queue = []
+        wantPaint = false
+        reveal = false
+        const top = Math.floor(scroll.scrollTop / LH)
+        lastTop = top
+        const v = await invoke('doc_apply', { id, cmds, top, rows: rows(), reveal: rev })
+        if (id === docId) paint(v, rev)
       }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      busy = false
+      for (const w of idleWaiters.splice(0)) w()
+    }
+  }
+
+  function send(...cmds) {
+    queue.push(...cmds)
+    reveal = true
+    pump()
+  }
+
+  function quiet(...cmds) {
+    queue.push(...cmds)
+    pump()
+  }
+
+  function repaint() {
+    wantPaint = true
+    pump()
+  }
+
+  function idle() {
+    return !busy && !queue.length ? Promise.resolve() : new Promise((r) => idleWaiters.push(r))
+  }
+
+  function current() {
+    return docId
+  }
+
+  const lastView = () => view
+
+  const scrollMemo = new Map()
+
+  function show(id) {
+    if (docId !== null) {
+      scrollMemo.set(docId, [scroll.scrollTop, scroll.scrollLeft])
+      if (view && rowCache.size) docCaches.set(docId, { rows: new Map(rowCache), key: cacheKey, n: view.n, h: sizerH, w: sizerW })
+    }
+    docId = id
+    queue = []
+    scroll.hidden = id === null
+    q('empty').hidden = id !== null
+    if (id === null) return
+    const [t, l] = scrollMemo.get(id) ?? [0, 0]
+    for (const r of live.values()) recycle(r)
+    live.clear()
+    sizer.style.height = sizerH = '0'
+    view = null
+    rowCache.clear()
+    cacheKey = ''
+    const old = docCaches.get(id)
+    if (old) {
+      // Draw what this document showed last, right away. The fresh view replaces it a moment later.
+      sizer.style.height = sizerH = old.h
+      sizer.style.width = sizerW = old.w
+      scroll.scrollTop = t
+      scroll.scrollLeft = l
+      const first = Math.max(0, Math.floor(t / LH) - 2)
+      const last = Math.min(old.n, Math.ceil((t + scroll.clientHeight) / LH) + 2)
+      for (let n = first; n < last; n++) {
+        const c = old.rows.get(n)
+        if (!c) continue
+        const r = makeRow(n)
+        r.num = c.num
+        r.g.textContent = c.num
+        r.on = false
+        r.g.classList.remove('cur')
+        setHtml(r.l, '_h', c.html)
+      }
+    }
+    lastCaret = null
+    if (root.dataset.fxUi === 'on') linesEl.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' })
+    queue.push({ t: 'fresh' })
+    wantPaint = true
+    pump().then(() => {
+      scroll.scrollTop = t
+      scroll.scrollLeft = l
     })
-  },
-  { passive: true },
-)
-
-new ResizeObserver(() => docId !== null && repaint()).observe(scroll)
-
-function pointToCell(e) {
-  const r = scroll.getBoundingClientRect()
-  const y = e.clientY - r.top + scroll.scrollTop
-  const x = e.clientX - r.left + scroll.scrollLeft - GW - PAD
-  return { line: Math.max(0, Math.floor(y / LH)), vcol: Math.max(0, Math.round(x / CH)) }
-}
-
-export function caretBox() {
-  if (!view) return { x: 0, y: 0, lh: LH }
-  return { x: GW + PAD + view.cur[1] * CH - scroll.scrollLeft, y: view.cur[0] * LH - scroll.scrollTop, lh: LH }
-}
-
-const hook = {
-  beforeKey: () => false,
-  afterType: () => {},
-  typed: () => {},
-  ctrlClick: () => {},
-  pointer: () => {},
-  scrolled: () => {},
-  context: () => {},
-  gutterContext: () => {},
-  hover: () => {},
-  hoverEnd: () => {},
-}
-
-export function hooks(h) {
-  Object.assign(hook, h)
-}
-
-let dragging = false
-let moving = null
-let lastPoint = null
-let edgeTimer = 0
-
-function dragTo(e) {
-  lastPoint = e
-  const c = pointToCell(e)
-  queue.push({ t: 'click', line: c.line, vcol: c.vcol, ext: true })
-  pump()
-}
-
-function edgeScroll() {
-  edgeTimer = 0
-  if ((!dragging && !moving?.active) || !lastPoint) return
-  const r = scroll.getBoundingClientRect()
-  const dy = lastPoint.clientY < r.top ? -LH * 2 : lastPoint.clientY > r.bottom ? LH * 2 : 0
-  if (dy) {
-    scroll.scrollTop += dy
-    if (moving) showDrop(lastPoint)
-    else dragTo(lastPoint)
-    edgeTimer = setTimeout(edgeScroll, 40)
+    focus()
   }
-}
 
-function inSelection(e) {
-  if (!view) return false
-  const r = scroll.getBoundingClientRect()
-  const c = pointToCell(e)
-  const vcol = Math.floor((e.clientX - r.left + scroll.scrollLeft - GW - PAD) / CH)
-  return view.sel.some(([l, a, b]) => l === c.line && vcol >= a && vcol < b)
-}
-
-function showDrop(e) {
-  lastPoint = e
-  const c = pointToCell(e)
-  const row = view ? Math.min(c.line, view.n - 1) : c.line
-  const length = live.get(row)?.l.textContent.length ?? c.vcol
-  dropCaret.style.transform = `translate(${PAD + Math.min(c.vcol, length) * CH}px,${row * LH}px)`
-  dropCaret.hidden = false
-}
-
-function endMove() {
-  moving = null
-  dropCaret.hidden = true
-  scroll.classList.remove('moving')
-}
-
-const lastDown = { time: -Infinity, x: 0, y: 0, clicks: 0 }
-
-// WebView2 always reports detail 0 on pointer events, so the count has to be ours.
-function countClicks(e) {
-  const near = Math.abs(e.clientX - lastDown.x) <= 4 && Math.abs(e.clientY - lastDown.y) <= 4
-  lastDown.clicks = near && e.timeStamp - lastDown.time <= 500 ? lastDown.clicks + 1 : 1
-  lastDown.time = e.timeStamp
-  lastDown.x = e.clientX
-  lastDown.y = e.clientY
-  return lastDown.clicks
-}
-
-scroll.addEventListener('pointerdown', (e) => {
-  hook.pointer()
-  if (e.button !== 0) return
-  const b = scroll.getBoundingClientRect()
-  if (e.clientX >= b.left + scroll.clientWidth || e.clientY >= b.top + scroll.clientHeight) return
-  e.preventDefault()
-  focus()
-  const c = pointToCell(e)
-  if (e.clientX - b.left < GW) {
-    if (e.clientX - b.left > GW - FOLD_W) quiet({ t: 'toggle_fold', row: c.line })
-    else quiet({ t: 'toggle_breakpoint', row: c.line })
-    return
+  function forget(id) {
+    scrollMemo.delete(id)
+    docCaches.delete(id)
   }
-  const clicks = countClicks(e)
-  if (clicks === 1 && !e.shiftKey && inSelection(e)) {
-    moving = { x: e.clientX, y: e.clientY, cell: c, active: false }
-    scroll.setPointerCapture(e.pointerId)
-    return
+
+  function focus() {
+    ime.focus({ preventScroll: true })
   }
-  if (clicks === 2) send({ t: 'word', ...c })
-  else if (clicks >= 3) send({ t: 'select_line', line: c.line })
-  else {
-    send({ t: 'click', ...c, ext: e.shiftKey })
-    if (e.ctrlKey) {
-      hook.ctrlClick()
+
+  const hasFocus = () => document.activeElement === ime
+
+  function recycle(r) {
+    r.l.hidden = true
+    r.g.hidden = true
+    spare.push(r)
+  }
+
+  function setHtml(el, key, html) {
+    if (el[key] !== html) {
+      el[key] = html
+      el.innerHTML = html
+    }
+  }
+
+  function viewKey(v) {
+    return `${docId}|${v.rev}|${v.n}|${v.total}|0`
+  }
+
+  function makeRow(n) {
+    let r = spare.pop()
+    if (!r) {
+      r = { l: document.createElement('div'), g: document.createElement('div') }
+      r.l.className = 'l'
+      r.g.className = 'gl'
+      linesEl.appendChild(r.l)
+      gutter.appendChild(r.g)
+    }
+    const y = n * LH + 'px'
+    r.l.style.top = y
+    r.g.style.top = y
+    r.l.style.left = PAD + 'px'
+    r.l.hidden = false
+    r.g.hidden = false
+    live.set(n, r)
+    return r
+  }
+
+  /** Draws, from what was drawn before, the rows in sight that the last view did not have. */
+  function paintCached() {
+    if (!view || docId === null || cacheKey !== viewKey(view)) return
+    const first = Math.max(0, Math.floor(scroll.scrollTop / LH) - 2)
+    const last = Math.min(view.n, Math.ceil((scroll.scrollTop + scroll.clientHeight) / LH) + 2)
+    for (let n = first; n < last; n++) {
+      if (live.has(n)) continue
+      const c = rowCache.get(n)
+      if (!c) continue
+      const r = makeRow(n)
+      r.num = c.num
+      r.g.textContent = c.num
+      r.on = false
+      r.g.classList.remove('cur')
+      setHtml(r.l, '_h', c.html)
+    }
+  }
+
+  function paint(v, revealed) {
+    // Highlights fade in when they change (the caret went to another word, the text changed),
+    // not when scrolling brings more of them into sight: dozens of them fading at every frame
+    // halved the frame rate.
+    const changed = !view || v.rev !== view.rev || v.cur[0] !== view.cur[0] || v.cur[1] !== view.cur[1]
+    occEl.classList.toggle('fresh', changed)
+    marksEl.classList.toggle('fresh', changed)
+    view = v
+    const digits = String(v.total).length
+    const gw = Math.ceil(Math.max(digits, 3) * CH) + 22 + FOLD_W
+    if (gw !== GW) {
+      GW = gw
+      document.documentElement.style.setProperty('--gw', gw + 'px')
+    }
+    const height = v.n * LH + 'px'
+    if (height !== sizerH) sizer.style.height = sizerH = height
+    const width = GW + PAD + (v.maxw + 4) * CH + 'px'
+    if (width !== sizerW) sizer.style.width = sizerW = width
+
+    if (revealed && v.top !== Math.floor(scroll.scrollTop / LH)) {
+      scroll.scrollTop = v.top * LH
+      lastTop = v.top
+    }
+
+    const end = v.first + v.lines.length
+    for (const [n, r] of live) {
+      if (n < v.first || n >= end) {
+        recycle(r)
+        live.delete(n)
+      }
+    }
+    const [curR, curV] = v.cur
+    for (let i = 0; i < v.lines.length; i++) {
+      const n = v.first + i
+      const r = live.get(n) ?? makeRow(n)
+      const num = v.nums[i] + 1
+      if (r.num !== num) {
+        r.num = num
+        r.g.textContent = num
+      }
+      setHtml(r.l, '_h', v.lines[i])
+      const on = n === curR
+      if (r.on !== on) {
+        r.on = on
+        r.g.classList.toggle('cur', on)
+      }
+    }
+
+    if (!v.pending) {
+      const key = viewKey(v)
+      if (key !== cacheKey) {
+        rowCache.clear()
+        cacheKey = key
+      }
+      for (let i = 0; i < v.lines.length; i++) rowCache.set(v.first + i, { html: v.lines[i], num: v.cont[i] ? '' : v.nums[i] + 1 })
+      if (rowCache.size > CACHE_ROWS) {
+        for (const n of [...rowCache.keys()].sort((a, b) => Math.abs(b - v.top) - Math.abs(a - v.top)).slice(0, rowCache.size - CACHE_ROWS)) rowCache.delete(n)
+      }
+    }
+
+    const x = PAD + curV * CH
+    const y = curR * LH
+    const tr = `translate(${x}px,${y}px)`
+    smear(x, y)
+    typingEffects(v, x, y, curR)
+    if (ghostText) ghostEl.style.transform = tr
+    caret.style.transform = tr
+    ime.style.transform = tr
+    curline.style.transform = `translateY(${y}px)`
+    execline.hidden = v.exec === null
+    if (v.exec !== null) execline.style.transform = `translateY(${v.exec * LH}px)`
+
+    const rect = (list) => list.map(([l, a, b]) => `<div style="top:${l * LH}px;left:${PAD + a * CH}px;width:${(b - a) * CH}px"></div>`).join('')
+    setHtml(selEl, '_h', rect(v.sel))
+    setHtml(marksEl, '_h', rect(v.marks))
+    setHtml(occEl, '_h', rect(v.occ))
+    setHtml(pairEl, '_h', v.pair.map(([l, a]) => `<div style="top:${l * LH}px;left:${PAD + a * CH}px;width:${CH}px"></div>`).join(''))
+    setHtml(diagsEl, '_h', v.diags.map(([l, a, b, s]) => `<div class="${s === 1 ? 'e' : 'w'}" style="top:${(l + 1) * LH - 2}px;left:${PAD + a * CH}px;width:${(b - a) * CH}px"></div>`).join(''))
+
+    const stripeMax = Math.max(v.n, 1)
+    setHtml(q('stripes'), '_h', v.stripes.map(([r, s]) => `<i class="${s === 1 ? 'e' : 'w'}" style="top:${(r / stripeMax) * 100}%"></i>`).join(''))
+
+    let g = ''
+    for (const [row, kind] of v.git) g += `<i class="g${kind}" style="top:${row * LH}px"></i>`
+    for (const row of v.bps) g += `<i class="bp" style="top:${row * LH}px"></i>`
+    if (v.exec !== null) g += `<i class="ex" style="top:${v.exec * LH}px"></i>`
+    for (const [row, s] of v.folds) g += `<i class="fd${s === 2 ? ' closed' : ''}" data-row="${row}" style="top:${row * LH}px">${s === 2 ? '›' : '⌄'}</i>`
+    setHtml(gmarks, '_h', g)
+
+    if (revealed) {
+      const margin = CH * 3
+      const left = scroll.scrollLeft
+      const width = scroll.clientWidth - GW
+      if (x - margin < left) scroll.scrollLeft = Math.max(0, x - margin)
+      else if (x + margin > left + width) scroll.scrollLeft = x + margin - width
+    }
+
+    if (v.clip !== null && v.clip !== undefined) clips.set(docId, v.clip)
+    onView(docId, v)
+  }
+
+  function typingEffects(v, x, y, row) {
+    const same = seenDoc === docId
+    const edited = same && v.rev !== seenRev
+    const grew = same && v.total === seenTotal + 1
+    const prevRow = seenRow, prevCol = seenCol, prevTotal = seenTotal, prevText = seenText
+    seenDoc = docId
+    seenRev = v.rev
+    seenTotal = v.total
+    seenRow = row
+    seenCol = v.cur[1]
+    seenText = live.get(row)?.l.textContent ?? ''
+    if (root.dataset.fxType !== 'on') return
+    const size = LH * 7
+    caretGlow.style.width = caretGlow.style.height = size + 'px'
+    caretGlow.style.transform = `translate(${x - size / 2 + 1}px,${y + LH / 2 - size / 2}px)`
+    if (!edited) return
+    caretGlow.getAnimations().forEach((a) => a.cancel())
+    caretGlow.animate([{ opacity: 1 }, { opacity: 0.5 }], { duration: 420, easing: 'ease-out' })
+    const typed = v.cur[1] - prevCol
+    // Fast typing shows the letters at once: fading each of them would leave the line half transparent.
+    const at = performance.now()
+    const fast = at - lastEditAt < 60
+    lastEditAt = at
+    if (!fast && !grew && prevRow === row && typed > 0 && typed <= 80) typedMarks.push({ row, from: prevCol, to: v.cur[1], t: at })
+    typedMarks = typedMarks.slice(-5)
+    fadeTyped(row)
+    if (!grew && prevRow === row && v.total === prevTotal) eraseText(prevText, seenText, row)
+    const lost = prevTotal - v.total
+    if (same && lost > 0 && lost <= 5) {
+      if (lost === 1 && prevRow === row && prevText.trim() && prevText !== seenText) eraseLine(prevText, row)
+      glideRows(row, lost * LH)
+    }
+    if (grew) glideRows(row, -LH)
+    if (grew) live.get(row)?.l.animate([{ opacity: 0.2, transform: 'translateY(-5px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' })
+  }
+
+  function wrapRange(el, from, to, className) {
+    const pieces = []
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    let offset = 0
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const a = Math.max(from, offset) - offset
+      const b = Math.min(to, offset + n.data.length) - offset
+      if (b > a) pieces.push([n, a, b])
+      offset += n.data.length
+    }
+    return pieces.reverse().map(([node, a, b]) => {
+      const span = document.createElement('span')
+      span.className = className
+      const range = document.createRange()
+      range.setStart(node, a)
+      range.setEnd(node, b)
+      range.surroundContents(span)
+      return span
+    })
+  }
+
+  /** Rows below a change move into place instead of jumping. */
+  function glideRows(from, dy) {
+    // Only the rows in sight move: animating the ones kept beyond the edges costs a lot and nobody sees it.
+    const lo = Math.floor(scroll.scrollTop / LH) - 1
+    const hi = lo + rows() + 3
+    for (const [n, r] of live) {
+      if (n <= from || n < lo || n > hi) continue
+      for (const el of [r.l, r.g]) el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 150, easing: 'ease-out' })
+    }
+  }
+
+  /** A deleted line slides out to the left as it fades. */
+  function eraseLine(text, row) {
+    const ghost = document.createElement('div')
+    ghost.className = 'erased'
+    ghost.textContent = text
+    ghost.style.left = PAD + 'px'
+    ghost.style.top = row * LH + 'px'
+    linesEl.parentElement.append(ghost)
+    ghost.animate([{ opacity: 0.8, filter: 'blur(0px)', transform: 'none' }, { opacity: 0, filter: 'blur(3px)', transform: 'translateX(-14px)' }], { duration: 220, easing: 'ease-out' }).onfinish = () => ghost.remove()
+  }
+
+  /** Deleted text fades out where it was, and what follows it glides into the gap. */
+  function eraseText(prev, next, row) {
+    if (next.length >= prev.length) return
+    let p = 0
+    while (p < next.length && prev[p] === next[p]) p++
+    let s = 0
+    while (s < next.length - p && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++
+    const gone = prev.slice(p, prev.length - s)
+    if (next.length !== p + s || !gone.trim() || gone.length > 80) return
+    const ghost = document.createElement('div')
+    ghost.className = 'erased'
+    ghost.textContent = gone
+    ghost.style.left = PAD + p * CH + 'px'
+    ghost.style.top = row * LH + 'px'
+    linesEl.parentElement.append(ghost)
+    ghost.animate([{ opacity: 0.8, filter: 'blur(0px)', transform: 'none' }, { opacity: 0, filter: 'blur(3px)', transform: 'translateY(-3px)' }], { duration: 240, easing: 'ease-out' }).onfinish = () => ghost.remove()
+    const el = live.get(row)?.l
+    if (!el || s === 0) return
+    for (const span of wrapRange(el, p, next.length, 'slide')) span.animate([{ transform: `translateX(${gone.length * CH}px)` }, { transform: 'none' }], { duration: 140, easing: 'ease-out' })
+  }
+
+  /** Text you just wrote fades in with the same soft blur as the text the AI writes. */
+  function fadeTyped(row) {
+    const now = performance.now()
+    typedMarks = typedMarks.filter((m) => m.row === row && now - m.t < TYPED_MS)
+    const el = live.get(row)?.l
+    if (!el || !typedMarks.length) return
+    const nodes = []
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    let offset = 0
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      nodes.push([n, offset])
+      offset += n.data.length
+    }
+    const jobs = []
+    for (const m of typedMarks) {
+      nodes.forEach(([node, start], i) => {
+        const a = Math.max(m.from, start) - start
+        const b = Math.min(m.to, start + node.data.length) - start
+        if (b > a) jobs.push({ i, node, a, b, age: now - m.t })
+      })
+    }
+    jobs.sort((p, q) => q.i - p.i || q.a - p.a)
+    for (const j of jobs) {
+      const span = document.createElement('span')
+      span.className = 'typed'
+      span.style.animationDelay = `-${Math.round(j.age)}ms`
+      const range = document.createRange()
+      range.setStart(j.node, j.a)
+      range.setEnd(j.node, j.b)
+      range.surroundContents(span)
+    }
+  }
+
+  /** `ahead` is how many characters the caret is about to move, until the next repaint catches up. */
+  function setGhost(text, ahead = 0) {
+    ghostText = text
+    ghostEl.textContent = text
+    ghostEl.hidden = !text
+    if (text && lastCaret) ghostEl.style.transform = `translate(${lastCaret.x + ahead * CH}px,${lastCaret.y}px)`
+  }
+
+  function flashSaved() {
+    if (root.dataset.fxType !== 'on') return
+    scroll.animate(
+      [{ boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent)' }, { boxShadow: 'inset 0 0 0 1px transparent' }],
+      { duration: 520, easing: 'ease-out' },
+    )
+  }
+
+  function smear(x, y) {
+    const from = lastCaret
+    lastCaret = { x, y }
+    if (!from || root.dataset.fxTrail !== 'on') return
+    const dx = from.x - x
+    const dy = from.y - y
+    const length = Math.hypot(dx, dy)
+    if (!length || length > 700) return
+    const angle = Math.atan2(dy, dx)
+    const height = Math.abs(Math.cos(angle)) * LH + Math.abs(Math.sin(angle)) * 3
+    trail.style.width = length + 'px'
+    trail.style.height = height + 'px'
+    trail.style.transform = `translate(${x}px,${y + (LH - height) / 2}px) rotate(${angle}rad)`
+    trail.style.transformOrigin = `0 ${height / 2}px`
+    trail.getAnimations().forEach((a) => a.cancel())
+    trail.animate([{ opacity: 0.32 }, { opacity: 0 }], { duration: 130, easing: 'ease-out' })
+  }
+
+  let scrollQueued = false
+  scroll.addEventListener(
+    'scroll',
+    () => {
+      hook.scrolled()
+      if (scrollQueued) return
+      scrollQueued = true
+      requestAnimationFrame(() => {
+        scrollQueued = false
+        if (Math.floor(scroll.scrollTop / LH) !== lastTop) {
+          paintCached()
+          repaint()
+        }
+      })
+    },
+    { passive: true },
+  )
+
+  new ResizeObserver(() => docId !== null && repaint()).observe(scroll)
+
+  function pointToCell(e) {
+    const r = scroll.getBoundingClientRect()
+    const y = e.clientY - r.top + scroll.scrollTop
+    const x = e.clientX - r.left + scroll.scrollLeft - GW - PAD
+    return { line: Math.max(0, Math.floor(y / LH)), vcol: Math.max(0, Math.round(x / CH)) }
+  }
+
+  function caretBox() {
+    if (!view) return { x: 0, y: 0, lh: LH }
+    return { x: GW + PAD + view.cur[1] * CH - scroll.scrollLeft, y: view.cur[0] * LH - scroll.scrollTop, lh: LH }
+  }
+
+  const hook = {
+    beforeKey: () => false,
+    afterType: () => {},
+    typed: () => {},
+    ctrlClick: () => {},
+    pointer: () => {},
+    scrolled: () => {},
+    context: () => {},
+    gutterContext: () => {},
+    hover: () => {},
+    hoverEnd: () => {},
+  }
+
+  function hooks(h) {
+    Object.assign(hook, h)
+  }
+
+  let dragging = false
+  let moving = null
+  let lastPoint = null
+  let edgeTimer = 0
+
+  function dragTo(e) {
+    lastPoint = e
+    const c = pointToCell(e)
+    queue.push({ t: 'click', line: c.line, vcol: c.vcol, ext: true })
+    pump()
+  }
+
+  function edgeScroll() {
+    edgeTimer = 0
+    if ((!dragging && !moving?.active) || !lastPoint) return
+    const r = scroll.getBoundingClientRect()
+    const dy = lastPoint.clientY < r.top ? -LH * 2 : lastPoint.clientY > r.bottom ? LH * 2 : 0
+    if (dy) {
+      scroll.scrollTop += dy
+      if (moving) showDrop(lastPoint)
+      else dragTo(lastPoint)
+      edgeTimer = setTimeout(edgeScroll, 40)
+    }
+  }
+
+  function inSelection(e) {
+    if (!view) return false
+    const r = scroll.getBoundingClientRect()
+    const c = pointToCell(e)
+    const vcol = Math.floor((e.clientX - r.left + scroll.scrollLeft - GW - PAD) / CH)
+    return view.sel.some(([l, a, b]) => l === c.line && vcol >= a && vcol < b)
+  }
+
+  function showDrop(e) {
+    lastPoint = e
+    const c = pointToCell(e)
+    const row = view ? Math.min(c.line, view.n - 1) : c.line
+    const length = live.get(row)?.l.textContent.length ?? c.vcol
+    dropCaret.style.transform = `translate(${PAD + Math.min(c.vcol, length) * CH}px,${row * LH}px)`
+    dropCaret.hidden = false
+  }
+
+  function endMove() {
+    moving = null
+    dropCaret.hidden = true
+    scroll.classList.remove('moving')
+  }
+
+  const lastDown = { time: -Infinity, x: 0, y: 0, clicks: 0 }
+
+  // WebView2 always reports detail 0 on pointer events, so the count has to be ours.
+  function countClicks(e) {
+    const near = Math.abs(e.clientX - lastDown.x) <= 4 && Math.abs(e.clientY - lastDown.y) <= 4
+    lastDown.clicks = near && e.timeStamp - lastDown.time <= 500 ? lastDown.clicks + 1 : 1
+    lastDown.time = e.timeStamp
+    lastDown.x = e.clientX
+    lastDown.y = e.clientY
+    return lastDown.clicks
+  }
+
+  scroll.addEventListener('pointerdown', (e) => {
+    hook.pointer()
+    if (e.button !== 0) return
+    const b = scroll.getBoundingClientRect()
+    if (e.clientX >= b.left + scroll.clientWidth || e.clientY >= b.top + scroll.clientHeight) return
+    e.preventDefault()
+    focus()
+    const c = pointToCell(e)
+    if (e.clientX - b.left < GW) {
+      if (e.clientX - b.left > GW - FOLD_W) quiet({ t: 'toggle_fold', row: c.line })
+      else quiet({ t: 'toggle_breakpoint', row: c.line })
       return
     }
-    dragging = true
-    scroll.setPointerCapture(e.pointerId)
-  }
-})
+    const clicks = countClicks(e)
+    if (clicks === 1 && !e.shiftKey && inSelection(e)) {
+      moving = { x: e.clientX, y: e.clientY, cell: c, active: false }
+      scroll.setPointerCapture(e.pointerId)
+      return
+    }
+    if (clicks === 2) send({ t: 'word', ...c })
+    else if (clicks >= 3) send({ t: 'select_line', line: c.line })
+    else {
+      send({ t: 'click', ...c, ext: e.shiftKey })
+      if (e.ctrlKey) {
+        hook.ctrlClick()
+        return
+      }
+      dragging = true
+      scroll.setPointerCapture(e.pointerId)
+    }
+  })
 
-let hoverTimer = 0
-scroll.addEventListener('pointermove', (e) => {
-  if (moving) {
-    if (!moving.active && Math.hypot(e.clientX - moving.x, e.clientY - moving.y) < 4) return
-    moving.active = true
-    scroll.classList.add('moving')
-    showDrop(e)
-    if (!edgeTimer) edgeTimer = setTimeout(edgeScroll, 40)
-    return
-  }
-  if (dragging) {
-    dragTo(e)
-    if (!edgeTimer) edgeTimer = setTimeout(edgeScroll, 40)
-    return
-  }
-  clearTimeout(hoverTimer)
-  hook.hoverEnd(e)
-  const b = scroll.getBoundingClientRect()
-  if (e.clientX - b.left < GW) return
-  const c = pointToCell(e)
-  const at = { x: e.clientX, y: e.clientY }
-  hoverTimer = setTimeout(() => hook.hover(c, at), 500)
-})
-scroll.addEventListener('pointerleave', () => clearTimeout(hoverTimer))
+  let hoverTimer = 0
+  scroll.addEventListener('pointermove', (e) => {
+    if (moving) {
+      if (!moving.active && Math.hypot(e.clientX - moving.x, e.clientY - moving.y) < 4) return
+      moving.active = true
+      scroll.classList.add('moving')
+      showDrop(e)
+      if (!edgeTimer) edgeTimer = setTimeout(edgeScroll, 40)
+      return
+    }
+    if (dragging) {
+      dragTo(e)
+      if (!edgeTimer) edgeTimer = setTimeout(edgeScroll, 40)
+      return
+    }
+    clearTimeout(hoverTimer)
+    hook.hoverEnd(e)
+    const b = scroll.getBoundingClientRect()
+    if (e.clientX - b.left < GW) return
+    const c = pointToCell(e)
+    const at = { x: e.clientX, y: e.clientY }
+    hoverTimer = setTimeout(() => hook.hover(c, at), 500)
+  })
+  scroll.addEventListener('pointerleave', () => clearTimeout(hoverTimer))
 
-const stopDrag = () => {
-  dragging = false
-}
-scroll.addEventListener('pointerup', (e) => {
-  stopDrag()
-  if (!moving) return
-  const { active, cell } = moving
-  endMove()
-  if (active) {
-    send({ t: 'move_selection', ...pointToCell(e), copy: e.ctrlKey })
-    return
+  const stopDrag = () => {
+    dragging = false
   }
-  send({ t: 'click', ...cell, ext: false })
-  if (e.ctrlKey) hook.ctrlClick()
-})
-scroll.addEventListener('pointercancel', () => {
-  stopDrag()
-  endMove()
-})
-
-scroll.addEventListener(
-  'wheel',
-  (e) => {
-    if (!e.ctrlKey) return
-    e.preventDefault()
-    const size = Math.max(10, Math.min(24, theme.look.edSize + (e.deltaY < 0 ? 1 : -1)))
-    if (size === theme.look.edSize) return
-    theme.look.edSize = size
-    theme.save()
-    theme.apply()
-    measure()
-  },
-  { passive: false },
-)
-
-scroll.addEventListener('contextmenu', (e) => {
-  e.preventDefault()
-  const b = scroll.getBoundingClientRect()
-  const c = pointToCell(e)
-  if (e.clientX - b.left < GW) {
-    hook.gutterContext(c, e)
-    return
-  }
-  if (!view || !view.sel.length) send({ t: 'click', ...c, ext: false })
-  focus()
-  hook.context(c, e)
-})
-
-const mv = (to, ext = false) => ({ t: 'move', to, ext, rows: rows() })
-const BINDINGS = {
-  ArrowLeft: mv('left'), ArrowRight: mv('right'), ArrowUp: mv('up'), ArrowDown: mv('down'),
-  Home: mv('home'), End: mv('end'), PageUp: mv('page_up'), PageDown: mv('page_down'),
-  'S-ArrowLeft': mv('left', true), 'S-ArrowRight': mv('right', true), 'S-ArrowUp': mv('up', true), 'S-ArrowDown': mv('down', true),
-  'S-Home': mv('home', true), 'S-End': mv('end', true), 'S-PageUp': mv('page_up', true), 'S-PageDown': mv('page_down', true),
-  'C-ArrowLeft': mv('word_left'), 'C-ArrowRight': mv('word_right'),
-  'C-S-ArrowLeft': mv('word_left', true), 'C-S-ArrowRight': mv('word_right', true),
-  'C-Home': mv('doc_start'), 'C-End': mv('doc_end'), 'C-S-Home': mv('doc_start', true), 'C-S-End': mv('doc_end', true),
-  Enter: { t: 'newline' }, Backspace: { t: 'backspace' }, Delete: { t: 'delete' },
-  'S-Backspace': { t: 'backspace' },
-  'C-Backspace': { t: 'delete_word_left' }, 'C-Delete': { t: 'delete_word_right' },
-  Tab: { t: 'tab' }, 'S-Tab': { t: 'outdent' },
-}
-
-ime.addEventListener('keydown', (e) => {
-  if (e.isComposing) return
-  const name = keyName(e)
-  if (hook.beforeKey(e, name)) {
-    e.preventDefault()
-    return
-  }
-  if (name === 'Escape' && moving) {
-    e.preventDefault()
+  scroll.addEventListener('pointerup', (e) => {
+    stopDrag()
+    if (!moving) return
+    const { active, cell } = moving
     endMove()
-    return
-  }
-  if (name === 'C-ArrowUp' || name === 'C-ArrowDown') {
+    if (active) {
+      send({ t: 'move_selection', ...pointToCell(e), copy: e.ctrlKey })
+      return
+    }
+    send({ t: 'click', ...cell, ext: false })
+    if (e.ctrlKey) hook.ctrlClick()
+  })
+  scroll.addEventListener('pointercancel', () => {
+    stopDrag()
+    endMove()
+  })
+
+  scroll.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const size = Math.max(10, Math.min(24, theme.look.edSize + (e.deltaY < 0 ? 1 : -1)))
+      if (size === theme.look.edSize) return
+      theme.look.edSize = size
+      theme.save()
+      theme.apply()
+      measure()
+    },
+    { passive: false },
+  )
+
+  scroll.addEventListener('contextmenu', (e) => {
     e.preventDefault()
-    scroll.scrollTop += name === 'C-ArrowUp' ? -LH : LH
-    return
+    const b = scroll.getBoundingClientRect()
+    const c = pointToCell(e)
+    if (e.clientX - b.left < GW) {
+      hook.gutterContext(c, e)
+      return
+    }
+    if (!view || !view.sel.length) send({ t: 'click', ...c, ext: false })
+    focus()
+    hook.context(c, e)
+  })
+
+  const mv = (to, ext = false) => ({ t: 'move', to, ext, rows: rows() })
+  const BINDINGS = {
+    ArrowLeft: mv('left'), ArrowRight: mv('right'), ArrowUp: mv('up'), ArrowDown: mv('down'),
+    Home: mv('home'), End: mv('end'), PageUp: mv('page_up'), PageDown: mv('page_down'),
+    'S-ArrowLeft': mv('left', true), 'S-ArrowRight': mv('right', true), 'S-ArrowUp': mv('up', true), 'S-ArrowDown': mv('down', true),
+    'S-Home': mv('home', true), 'S-End': mv('end', true), 'S-PageUp': mv('page_up', true), 'S-PageDown': mv('page_down', true),
+    'C-ArrowLeft': mv('word_left'), 'C-ArrowRight': mv('word_right'),
+    'C-S-ArrowLeft': mv('word_left', true), 'C-S-ArrowRight': mv('word_right', true),
+    'C-Home': mv('doc_start'), 'C-End': mv('doc_end'), 'C-S-Home': mv('doc_start', true), 'C-S-End': mv('doc_end', true),
+    Enter: { t: 'newline' }, Backspace: { t: 'backspace' }, Delete: { t: 'delete' },
+    'S-Backspace': { t: 'backspace' },
+    'C-Backspace': { t: 'delete_word_left' }, 'C-Delete': { t: 'delete_word_right' },
+    Tab: { t: 'tab' }, 'S-Tab': { t: 'outdent' },
   }
-  if (name === 'C-x') {
+
+  ime.addEventListener('keydown', (e) => {
+    if (e.isComposing) return
+    const name = keyName(e)
+    if (hook.beforeKey(e, name)) {
+      e.preventDefault()
+      return
+    }
+    if (name === 'Escape' && moving) {
+      e.preventDefault()
+      endMove()
+      return
+    }
+    if (name === 'C-ArrowUp' || name === 'C-ArrowDown') {
+      e.preventDefault()
+      scroll.scrollTop += name === 'C-ArrowUp' ? -LH : LH
+      return
+    }
+    if (name === 'C-x') {
+      e.preventDefault()
+      cutToClipboard()
+      return
+    }
+    const b = BINDINGS[name]
+    if (b) {
+      e.preventDefault()
+      send(b)
+      hook.afterType(name)
+    }
+  })
+
+  let composing = false
+  ime.addEventListener('compositionstart', () => (composing = true))
+  ime.addEventListener('compositionend', () => {
+    composing = false
+    flushInput()
+  })
+  ime.addEventListener('input', () => {
+    if (!composing) flushInput()
+  })
+
+  function flushInput() {
+    const s = ime.value
+    ime.value = ''
+    if (!s) return
+    send({ t: 'type', s })
+    hook.afterType(s)
+    hook.typed(s)
+  }
+
+  // An empty clip means the text was too big to be sent ahead: the backend copies it itself.
+  ime.addEventListener('copy', (e) => {
     e.preventDefault()
-    cutToClipboard()
-    return
-  }
-  const b = BINDINGS[name]
-  if (b) {
+    if (clipOf(docId)) e.clipboardData.setData('text/plain', clipOf(docId))
+    else if (docId !== null) invoke('doc_copy', { id: docId }).catch(() => {})
+  })
+  ime.addEventListener('paste', (e) => {
     e.preventDefault()
-    send(b)
-    hook.afterType(name)
+    const s = e.clipboardData.getData('text/plain')
+    if (s) send({ t: 'insert', s })
+  })
+
+  async function copyToClipboard() {
+    await idle()
+    if (!clipOf(docId) && docId !== null) return invoke('doc_copy', { id: docId })
+    return invoke('clipboard_write', { text: clipOf(docId) })
   }
-})
 
-let composing = false
-ime.addEventListener('compositionstart', () => (composing = true))
-ime.addEventListener('compositionend', () => {
-  composing = false
-  flushInput()
-})
-ime.addEventListener('input', () => {
-  if (!composing) flushInput()
-})
+  async function cutToClipboard() {
+    await copyToClipboard()
+    send({ t: 'cut_selection' })
+  }
 
-function flushInput() {
-  const s = ime.value
-  ime.value = ''
-  if (!s) return
-  send({ t: 'type', s })
-  hook.afterType(s)
-  hook.typed(s)
+  async function pasteFromClipboard() {
+    const s = await invoke('clipboard_read')
+    if (s) send({ t: 'insert', s })
+  }
+
+  function docCommand(id, cmds) {
+    if (id === docId) return quiet(...cmds)
+    return invoke('doc_apply', { id, cmds, top: 0, rows: 1, reveal: false })
+  }
+
+  return { metrics, configure, measure, send, quiet, repaint, idle, current, lastView, show, forget, focus, hasFocus, setGhost, flashSaved, caretBox, hooks, copyToClipboard, cutToClipboard, pasteFromClipboard, docCommand, pane }
 }
 
-ime.addEventListener('copy', (e) => {
-  e.preventDefault()
-  e.clipboardData.setData('text/plain', clip)
-})
-ime.addEventListener('paste', (e) => {
-  e.preventDefault()
-  const s = e.clipboardData.getData('text/plain')
-  if (s) send({ t: 'insert', s })
-})
+// Editor groups. Each group has an editor of its own; the functions exported below act on the
+// one with the focus, so the rest of the app talks to "the editor" as it always did.
+const template = document.querySelector('.e-ed').cloneNode(true)
+// The popups (completion, hover, signature) are shared: they move to the group with the focus.
+for (const el of template.querySelectorAll('[id]')) el.remove()
+const editors = []
+let cur = null
+let viewHandler = () => {}
+let hookSet = {}
+let focusHandler = () => {}
 
-export async function copyToClipboard() {
-  await idle()
-  return invoke('clipboard_write', { text: clip })
+function adopt(e) {
+  e.configure({
+    onChange: (id, v) => {
+      // A group showing the same document draws the change too.
+      for (const o of editors) if (o !== e && o.current() === id && o.lastView()?.rev !== v.rev) o.repaint()
+      viewHandler(id, v, e === cur)
+    },
+  })
+  e.hooks(hookSet)
+  e.pane.querySelector('.e-ime').addEventListener('focus', () => {
+    if (cur === e) return
+    cur = e
+    focusHandler(editors.indexOf(e))
+  })
+  editors.push(e)
+  return e
+}
+cur = adopt(createEditor(document.querySelector('.e-ed')))
+
+/** Adds an editor in `host` (a new group's element) and returns its index. */
+export function addEditor(host) {
+  const pane = template.cloneNode(true)
+  host.appendChild(pane)
+  const e = adopt(createEditor(pane))
+  e.measure()
+  return editors.length - 1
 }
 
-export async function cutToClipboard() {
-  await copyToClipboard()
-  send({ t: 'cut_selection' })
+export function removeEditor(i) {
+  const [e] = editors.splice(i, 1)
+  e?.pane.remove()
+  if (cur === e) cur = editors[0]
 }
 
-export async function pasteFromClipboard() {
-  const s = await invoke('clipboard_read')
-  if (s) send({ t: 'insert', s })
+/** Makes the editor of group `i` the one the exports act on, without moving the focus. */
+export function use(i) {
+  if (editors[i]) cur = editors[i]
+}
+export const editorIndex = () => editors.indexOf(cur)
+export const editorCount = () => editors.length
+export const editorAt = (i) => editors[i]
+/** The element of the editor with the focus: popups are placed in it. */
+export const host = () => cur.pane
+/** Called with the group's index when another editor gets the focus. */
+export function onFocusChange(fn) {
+  focusHandler = fn
 }
 
+export function configure(o) {
+  viewHandler = o.onChange
+}
+export function hooks(h) {
+  Object.assign(hookSet, h)
+  for (const e of editors) e.hooks(h)
+}
+export function measure() {
+  for (const e of editors) e.measure()
+}
+/** Draws again every editor showing a document (diagnostics, git marks and so on changed). */
+export function repaint() {
+  for (const e of editors) if (e.current() !== null) e.repaint()
+}
+export function forget(id) {
+  for (const e of editors) e.forget(id)
+}
+export function idle() {
+  return Promise.all(editors.map((e) => e.idle())).then(() => {})
+}
 export function docCommand(id, cmds) {
-  if (id === docId) return quiet(...cmds)
-  return invoke('doc_apply', { id, cmds, top: 0, rows: 1, reveal: false })
+  const e = cur.current() === id ? cur : editors.find((x) => x.current() === id) ?? cur
+  return e.docCommand(id, cmds)
 }
+export const metrics = (...a) => cur.metrics(...a)
+export const send = (...a) => cur.send(...a)
+export const quiet = (...a) => cur.quiet(...a)
+export const current = (...a) => cur.current(...a)
+export const lastView = (...a) => cur.lastView(...a)
+export const show = (...a) => cur.show(...a)
+export const focus = (...a) => cur.focus(...a)
+export const hasFocus = (...a) => cur.hasFocus(...a)
+export const setGhost = (...a) => cur.setGhost(...a)
+export const flashSaved = (...a) => cur.flashSaved(...a)
+export const caretBox = (...a) => cur.caretBox(...a)
+export const copyToClipboard = (...a) => cur.copyToClipboard(...a)
+export const cutToClipboard = (...a) => cur.cutToClipboard(...a)
+export const pasteFromClipboard = (...a) => cur.pasteFromClipboard(...a)

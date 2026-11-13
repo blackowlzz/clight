@@ -193,7 +193,11 @@ impl Grid {
         } else if !on {
             if let Some(main) = self.alt.take() {
                 self.screen = main;
-                (self.x, self.y, self.attr) = self.saved;
+                // The window may have been resized while the program (vim, less, htop) ran, so
+                // the place saved when it started can be outside the screen now.
+                let (x, y, a) = self.saved;
+                self.attr = a;
+                self.goto(x, y);
             }
         }
         self.mark(0, self.rows - 1);
@@ -1113,6 +1117,15 @@ mod tests {
             .collect::<String>()
             .trim_end()
             .to_string()
+    }
+
+    #[test]
+    fn leaving_a_full_screen_program_after_shrinking_the_window() {
+        let mut g = Grid::new(80, 30);
+        feed(&mut g, "\x1b[28;70Hprompt\x1b[?1049h");
+        g.resize(20, 5);
+        feed(&mut g, "\x1b[?1049lok");
+        assert!(g.x < 20 && g.y < 5);
     }
 
     #[test]
