@@ -13,17 +13,26 @@ with open(os.path.join(proj, "main.c"), "w", newline="\r\n") as f:
     for i in range(300):
         f.write(f"int f{i}(int x) {{ return x + {i}; }}\n")
 
-exe = (glob.glob(os.path.expandvars(r"%LOCALAPPDATA%\**\clight.exe"), recursive=True) + glob.glob(r"C:\Program Files\**\clight.exe", recursive=True))[0]
+exe = os.path.expandvars(r"%LOCALAPPDATA%\clight\clight.exe")
 print("exe", exe)
 env = dict(os.environ, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222")
 proc = subprocess.Popen([exe, os.path.join(proj, "main.c")], env=env)
 
-for _ in range(120):
+ok = False
+for i in range(90):
     try:
-        urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=1)
+        print(urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=1).read().decode()[:300])
+        ok = True
         break
-    except Exception:
-        time.sleep(0.5)
+    except Exception as e:
+        if i % 10 == 0:
+            print("waiting", i, proc.poll(), e)
+        time.sleep(1)
+if not ok:
+    pyautogui.screenshot(os.path.join(OUT, "00-no-cdp-screen.png"))
+    print(subprocess.run("tasklist | findstr /i \"clight msedgewebview2\"", shell=True, capture_output=True, text=True).stdout)
+    print(subprocess.run("netstat -ano | findstr LISTEN", shell=True, capture_output=True, text=True).stdout)
+    raise SystemExit("no CDP")
 
 PROBE = r"""
 (() => {
